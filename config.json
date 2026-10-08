@@ -13,13 +13,41 @@
     "since": 2026
   },
   "nav": [
-    { "key": "index",   "label": "首页", "url": "" },
-    { "key": "archive", "label": "归档", "url": "archive/" },
-    { "key": "tags",    "label": "标签", "url": "tags/" },
-    { "key": "docs",    "label": "文档", "url": "docs/" },
-    { "key": "links",   "label": "友链", "url": "links/" },
-    { "key": "search",  "label": "搜索", "url": "search/" },
-    { "key": "about",   "label": "关于", "url": "about/" }
+    {
+      "key": "index",
+      "label": "首页",
+      "url": ""
+    },
+    {
+      "key": "archive",
+      "label": "归档",
+      "url": "archive/"
+    },
+    {
+      "key": "tags",
+      "label": "标签",
+      "url": "tags/"
+    },
+    {
+      "key": "docs",
+      "label": "文档",
+      "url": "docs/"
+    },
+    {
+      "key": "links",
+      "label": "友链",
+      "url": "links/"
+    },
+    {
+      "key": "search",
+      "label": "搜索",
+      "url": "search/"
+    },
+    {
+      "key": "about",
+      "label": "关于",
+      "url": "about/"
+    }
   ],
   "social": {
     "GitHub": "https://github.com/techjiang",
@@ -53,6 +81,20 @@
     "tags_count": 16,
     "show_archive": true
   },
+  "monitor": {
+    "enabled": true,
+    "widget": true,
+    "targets": [
+      {
+        "name": "本站首页",
+        "url": "https://techjiang.github.io/OverCome/"
+      },
+      {
+        "name": "GitHub",
+        "url": "https://github.com/"
+      }
+    ]
+  },
   "friends": [
     {
       "name": "科技酱",
@@ -74,10 +116,39 @@
       "note": "无后端架构：默认通过邮件提交；如需服务端收集，可在 config.json 配置 endpoint。",
       "endpoint": "",
       "fields": [
-        { "name": "name", "label": "称呼", "type": "text", "placeholder": "你的称呼", "required": true },
-        { "name": "contact", "label": "联系方式", "type": "text", "placeholder": "邮箱 / 微信 / 其他", "required": false },
-        { "name": "type", "label": "反馈类型", "type": "select", "options": ["建议", "问题", "合作", "其他"], "required": true },
-        { "name": "message", "label": "内容", "type": "textarea", "placeholder": "请详细描述你的想法…", "required": true }
+        {
+          "name": "name",
+          "label": "称呼",
+          "type": "text",
+          "placeholder": "你的称呼",
+          "required": true
+        },
+        {
+          "name": "contact",
+          "label": "联系方式",
+          "type": "text",
+          "placeholder": "邮箱 / 微信 / 其他",
+          "required": false
+        },
+        {
+          "name": "type",
+          "label": "反馈类型",
+          "type": "select",
+          "options": [
+            "建议",
+            "问题",
+            "合作",
+            "其他"
+          ],
+          "required": true
+        },
+        {
+          "name": "message",
+          "label": "内容",
+          "type": "textarea",
+          "placeholder": "请详细描述你的想法…",
+          "required": true
+        }
       ]
     }
   ]

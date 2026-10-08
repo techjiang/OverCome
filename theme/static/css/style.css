@@ -644,6 +644,31 @@ pre.code-block::-webkit-scrollbar-thumb { border-width: 1px; }
 .form-note { font-size: 12.5px; color: var(--text-faint); }
 .form-ok { padding: 14px; border-radius: 10px; background: var(--accent-soft); color: var(--accent-strong); font-weight: 600; }
 
+/* ------------- 站点监测 (右上栏 widget) ------------- */
+.monitor-row {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
+  font-size: 12.5px; color: var(--text-mid); padding: 4px 0; line-height: 1.5;
+}
+.monitor-row b { color: var(--text-soft); font-weight: 700; flex: none; }
+.monitor-row span { text-align: right; }
+.monitor-item {
+  display: flex; justify-content: space-between; gap: 10px; align-items: baseline;
+  font-size: 12.5px; padding: 5px 0; border-bottom: 1px dashed var(--line);
+}
+.monitor-item:last-of-type { border-bottom: none; }
+.monitor-item .t-name { color: var(--text-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.t-status { font-size: 12px; flex: none; }
+.t-status.ok { color: #3f9d63; font-weight: 600; }
+.t-status.down { color: #c4534b; font-weight: 600; }
+.t-status.checking { color: var(--text-faint); }
+.monitor-refresh {
+  margin-top: 9px; font-size: 12px; padding: 5px 14px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--card); color: var(--text-soft);
+  cursor: pointer; transition: all .18s;
+}
+.monitor-refresh:hover { border-color: var(--accent); color: var(--accent-strong); }
+.monitor-note { font-size: 12px; color: var(--text-faint); margin: 0; }
+
 /* Firefox 滚动条 */
 @-moz-document url-prefix() {
   * { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }

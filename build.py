@@ -492,6 +492,13 @@ class Renderer:
         if cfg.get("show_archive", True):
             widgets.append(
                 f'<div class="widget"><h3>归档</h3><ul class="widget-list"><li><a href="{root}archive/">全部文章 ({len(_ALL_POSTS)})</a><span class="w-date">{SITE["since"]} 至今</span></li></ul></div>')
+        # 站点监测 (延迟/状态, 独立开关, 与左侧栏底部统计互不影响)
+        mon = CONFIG.get("monitor") or {}
+        if mon.get("enabled") and mon.get("widget", True):
+            targets = json.dumps(mon.get("targets", []), ensure_ascii=False)
+            widgets.append(f'''<div class="widget"><h3>站点监测</h3>
+<div class="monitor" id="monitor-box" data-targets='{targets}'></div>
+<script src="{root}static/js/monitor.js?v={assets_version()}" defer></script></div>''')
         if not widgets:
             return ""
         return '<aside class="right-bar" aria-label="侧边栏">' + "".join(widgets) + "</aside>"
