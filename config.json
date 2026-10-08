@@ -95,6 +95,13 @@
       }
     ]
   },
+  "seo": {
+    "enabled": true,
+    "indexnow_key": "2a28414cd8cdd67793ea57",
+    "baidu_token": "",
+    "twitter_handle": "",
+    "og_image": ""
+  },
   "friends": [
     {
       "name": "科技酱",

@@ -420,6 +420,70 @@ def related_posts(post, posts, k=3):
 
 # -------------------------------------------------------------- 渲染 ----
 
+def seo_meta(title, description, page_url="", page_type="website", date_iso="", image=""):
+    """生成 canonical + Open Graph + Twitter Card + JSON-LD 结构化数据。
+    page_url 为站内相对路径(如 posts/x/); 空串 = 首页。"""
+    base = SITE.get("base", "").rstrip("/") + "/"
+    absolute = base if not page_url else base + page_url.lstrip("/")
+    cfg = CONFIG.get("seo") or {}
+    default_img = cfg.get("og_image") or "static/img/favicon.svg"
+    img = image or default_img
+    if img and not img.startswith(("http://", "https://")):
+        img = base + img.lstrip("/")
+    lang = SITE.get("language", "zh-CN")
+    h = [f'<link rel="canonical" href="{esc(absolute)}">']
+    h.append(f'<meta property="og:type" content="{esc(page_type)}">')
+    h.append(f'<meta property="og:title" content="{esc(title)}">')
+    h.append(f'<meta property="og:description" content="{esc(description)}">')
+    h.append(f'<meta property="og:url" content="{esc(absolute)}">')
+    h.append(f'<meta property="og:site_name" content="{esc(SITE.get("title", ""))}">')
+    h.append(f'<meta property="og:locale" content="{esc(lang.replace("-", "_"))}">')
+    h.append('<meta name="twitter:card" content="summary_large_image">')
+    h.append(f'<meta name="twitter:title" content="{esc(title)}">')
+    h.append(f'<meta name="twitter:description" content="{esc(description)}">')
+    if cfg.get("twitter_handle"):
+        h.append(f'<meta name="twitter:site" content="{esc(cfg["twitter_handle"])}">')
+    if img:
+        h.append(f'<meta property="og:image" content="{esc(img)}">')
+        h.append(f'<meta name="twitter:image" content="{esc(img)}">')
+    if page_type == "article":
+        ld = {
+            "@context": "https://schema.org",
+            "@type": "BlogPosting",
+            "headline": title,
+            "description": description,
+            "url": absolute,
+            "mainEntityOfPage": {"@type": "WebPage", "@id": absolute},
+            "inLanguage": lang,
+            "author": {"@type": "Person", "name": SITE.get("author", "")},
+            "publisher": {"@type": "Organization", "name": SITE.get("title", ""),
+                          "logo": {"@type": "ImageObject", "url": img}},
+        }
+        if date_iso:
+            ld["datePublished"] = date_iso + "T00:00:00+08:00"
+            ld["dateModified"] = date_iso + "T00:00:00+08:00"
+    elif page_type == "website":
+        ld = {
+            "@context": "https://schema.org",
+            "@type": "WebSite",
+            "name": SITE.get("title", ""),
+            "description": SITE.get("description", ""),
+            "url": base,
+            "inLanguage": lang,
+        }
+    else:
+        ld = {
+            "@context": "https://schema.org",
+            "@type": "WebPage",
+            "name": title,
+            "description": description,
+            "url": absolute,
+            "inLanguage": lang,
+        }
+    h.append(f'<script type="application/ld+json">{json.dumps(ld, ensure_ascii=False)}</script>')
+    return "\n".join(h)
+
+
 class Renderer:
     """root 前缀: 空 = 根目录页面; '../' = 一级子目录; '../../' = 二级子目录"""
 
@@ -429,7 +493,7 @@ class Renderer:
         self.social = CONFIG.get("social", {})
         self.dist = DIST
 
-    def page(self, title, body, *, root, active="", description="", extra_head="", side_toc="", show_right=True):
+    def page(self, title, body, *, root, active="", description="", extra_head="", side_toc="", show_right=True, seo=None):
         nav_html = []
         for item in self.nav:
             url = item.get("url", "")
@@ -448,6 +512,14 @@ class Renderer:
             if icons:
                 social_html = f'<div class="social">{icons}</div>'
         right_html = self.right_bar_html(root) if show_right else ""
+        if seo is None:
+            seo = {}
+        _surl = seo.get("url", "")
+        _stype = seo.get("type", "website")
+        _sdate = seo.get("date", "")
+        _simg = seo.get("image", "")
+        seo_head = seo_meta(title, description or SITE.get("description", ""),
+                            _surl, _stype, _sdate, _simg)
         return self.base.replace("{{title}}", esc(title)) \
             .replace("{{site_title}}", esc(SITE["title"])) \
             .replace("{{subtitle}}", esc(SITE.get("subtitle", ""))) \
@@ -460,6 +532,7 @@ class Renderer:
             .replace("{{site_year}}", str(datetime.date.today().year)) \
             .replace("{{site_author}}", esc(SITE.get("author", ""))) \
             .replace("{{extra_head}}", extra_head) \
+            .replace("{{seo_head}}", seo_head) \
             .replace("{{analytics}}", analytics_html()) \
             .replace("{{assets_version}}", assets_version()) \
             .replace("{{content}}", body)
@@ -637,7 +710,8 @@ def render_index(posts, page_no=1, per_page=6):
 
     body = hero + featured_cards + '<div class="cards">' + "".join(cards) + "</div>" + pagination
     return r.page(SITE.get("title", ""), body, root=root, active="index",
-                  description=SITE.get("description", ""))
+                  description=SITE.get("description", ""),
+                  seo={"url": "", "type": "website"})
 
 
 def render_post(post, posts):
@@ -694,13 +768,17 @@ def render_post(post, posts):
 </article>''' + comments_html()
     return r.page(post["title"], article, root=root, active="",
                   description=post.get("summary", ""), side_toc=side_toc,
-                  extra_head=f'<link rel="stylesheet" href="../../static/css/highlight.css?v={assets_version()}">')
+                  extra_head=f'<link rel="stylesheet" href="../../static/css/highlight.css?v={assets_version()}">',
+                  seo={"url": "posts/%s/" % post["slug"], "type": "article",
+                       "date": post["date"].isoformat(), "image": post.get("cover", "")})
 
 
 def render_page(page):
     r = Renderer()
     body = f'<article class="page post"><header class="post-header"><h1 class="page-title">{esc(page["title"])}</h1></header><div class="post-body">{page["content_html"]}</div></article>'
-    return r.page(page["title"], body, root="../", active="page", description=SITE.get("description", ""))
+    surl = "" if page["slug"] == "index" else page["slug"] + "/"
+    return r.page(page["title"], body, root="../", active="page", description=SITE.get("description", ""),
+                  seo={"url": surl, "type": "webpage"})
 
 
 def render_archive(posts):
@@ -713,7 +791,7 @@ def render_archive(posts):
             for p in archive[key])
         html_parts.append(f'<section class="archive-group"><h2>{esc(key)} <em>{len(archive[key])}</em></h2><ul>{items}</ul></section>')
     body = f'<div class="page post"><header class="post-header"><h1 class="page-title">归档</h1><p class="page-sub">共 {len(posts)} 篇文章</p></header><div class="archive">{"".join(html_parts)}</div></div>'
-    return r.page("归档", body, root="../", active="archive")
+    return r.page("归档", body, root="../", active="archive", seo={"url": "archive/"})
 
 
 def render_tags(posts):
@@ -724,7 +802,7 @@ def render_tags(posts):
         size = 1 + min(2, len(ps) // 3)
         items.append(f'<a class="tag-cloud tag-{size}" href="../tags/{slugify(tag)}/">{esc(tag)}<em>{len(ps)}</em></a>')
     body = f'<div class="page post"><header class="post-header"><h1 class="page-title">标签</h1></header><div class="tag-cloud-wrap">{"".join(items)}</div></div>'
-    return r.page("标签", body, root="../", active="tags")
+    return r.page("标签", body, root="../", active="tags", seo={"url": "tags/"})
 
 
 def render_tag(tag, posts):
@@ -734,7 +812,7 @@ def render_tag(tag, posts):
         f'<li><span class="date">{p["date_str"]}</span><a href="{root}posts/{p["slug"]}/">{esc(p["title"])}</a></li>'
         for p in posts)
     body = f'<div class="page post"><header class="post-header"><h1 class="page-title">#{esc(tag)}</h1><p class="page-sub">{len(posts)} 篇文章</p></header><ul class="flat-list">{items}</ul></div>'
-    return r.page(f"标签: {tag}", body, root=root, active="tags")
+    return r.page(f"标签: {tag}", body, root=root, active="tags", seo={"url": f"tags/{slugify(tag)}/"})
 
 
 def render_category(cat, posts):
@@ -744,7 +822,7 @@ def render_category(cat, posts):
         f'<li><span class="date">{p["date_str"]}</span><a href="{root}posts/{p["slug"]}/">{esc(p["title"])}</a></li>'
         for p in posts)
     body = f'<div class="page post"><header class="post-header"><h1 class="page-title">{esc(cat)}</h1><p class="page-sub">{len(posts)} 篇文章</p></header><ul class="flat-list">{items}</ul></div>'
-    return r.page(f"分类: {cat}", body, root=root, active="")
+    return r.page(f"分类: {cat}", body, root=root, active="", seo={"url": f"categories/{slugify(cat)}/"})
 
 
 def render_search():
@@ -754,13 +832,14 @@ def render_search():
 <div id="search-hint" class="search-hint">输入关键词即可全文检索本站内容</div>
 <ul id="search-results" class="search-results"></ul></div>
 <script src="../static/js/search.js?v={assets_version()}" defer></script>'''
-    return r.page("搜索", body, root="../", active="search", show_right=False)
+    return r.page("搜索", body, root="../", active="search", show_right=False, seo={"url": "search/"})
 
 
 def render_404():
     r = Renderer()
     body = '<div class="page post notfound"><h1 class="page-title">404</h1><p class="hero-sub">页面不存在或已被移动。</p><a class="btn" href="index.html">返回首页</a></div>'
-    return r.page("页面未找到", body, root="", active="", show_right=False)
+    return r.page("页面未找到", body, root="", active="", show_right=False,
+                  extra_head='<meta name="robots" content="noindex">')
 
 
 # ----------------------------------------------------- 文档 / 友链 / 问卷 / 短链 ----
@@ -778,7 +857,7 @@ def render_docs_index(docs):
             for d in groups[cat])
         blocks.append(f'<section class="archive-group"><h2>{esc(cat)} <em>{len(groups[cat])}</em></h2><ul>{items}</ul></section>')
     body = f'<div class="page post"><header class="post-header"><h1 class="page-title">文档</h1><p class="page-sub">共 {len(docs)} 篇文档</p></header><div class="archive">{"".join(blocks)}</div></div>'
-    return r.page("文档", body, root="../", active="docs")
+    return r.page("文档", body, root="../", active="docs", seo={"url": "docs/"})
 
 
 def render_doc(doc, docs):
@@ -816,7 +895,9 @@ def render_doc(doc, docs):
   <footer class="post-footer"><nav class="post-nav">{prev_html}{next_html}</nav></footer>
 </article>'''
     return r.page(doc["title"], article, root=root, active="docs",
-                  description=doc.get("summary", ""), side_toc=side_toc)
+                  description=doc.get("summary", ""), side_toc=side_toc,
+                  seo={"url": "docs/%s/" % doc["slug"], "type": "article",
+                       "date": doc["date"].isoformat() if doc.get("date") else ""})
 
 
 def render_links(friends, submit_url=""):
@@ -875,7 +956,7 @@ def render_links(friends, submit_url=""):
     if submit_url:
         submit_block = f'<div class="link-submit"><p>想交换友链？<a class="btn" href="{esc(submit_url)}" target="_blank" rel="noopener nofollow">申请加入</a></p></div>'
     body = f'<div class="page post"><header class="post-header"><h1 class="page-title">友情链接</h1><p class="page-sub">共 {len(friends)} 位伙伴</p></header><ul class="friend-list">{items}</ul>{submit_block}{form_html}</div>'
-    return r.page("友情链接", body, root=root, active="links")
+    return r.page("友情链接", body, root=root, active="links", seo={"url": "links/"})
 
 
 def render_survey(form):
@@ -928,7 +1009,8 @@ def render_survey(form):
   <div class="survey-fields">{''.join(fields_html)}</div>
   <div class="form-actions"><button class="btn" type="submit">提交</button><span class="form-note">{note}</span></div>
 </form></div>{js}'''
-    return r.page(title, body, root=root, active="", description=note)
+    return r.page(title, body, root=root, active="", description=note,
+                  seo={"url": "forms/" + slug + "/"})
 
 
 def render_shortlink(key, target):
@@ -950,53 +1032,83 @@ def render_shortlink(key, target):
 
 # --------------------------------------------------------------- Feed ----
 
+def _feed_dt(d):
+    if not d:
+        d = datetime.date.today()
+    return d.isoformat() + "T00:00:00+08:00"
+
+
+def _cd(text):
+    """CDATA 包裹, 并转义内部的 ]]> 避免提前闭合"""
+    return "<![CDATA[" + str(text).replace("]]>", "]]]]><![CDATA[>") + "]]>"
+
+
 def render_feed(posts):
     base = SITE.get("base", "").rstrip("/") + "/"
-    pub = (posts[0]["date"].isoformat() if posts else datetime.date.today().isoformat()) + "T00:00:00+08:00"
+    today = datetime.date.today().isoformat() + "T00:00:00+08:00"
+    pub = _feed_dt(posts[0]["date"]) if posts else today
     entries = []
     for p in posts[:20]:
-        desc = esc(p.get("summary") or p["content_text"][:200])
+        desc = p.get("summary") or p["content_text"][:200]
+        full = p["content_html"]
         entries.append(f'''<entry>
   <title>{esc(p["title"])}</title>
   <link href="{base}{p["url"]}"/>
   <id>{base}{p["url"]}</id>
-  <published>{p["date"].isoformat()}T00:00:00+08:00</published>
-  <updated>{p["date"].isoformat()}T00:00:00+08:00</updated>
-  <author><name>{esc(SITE.get("author", ""))}</name></author>
+  <guid isPermaLink="true">{base}{p["url"]}</guid>
+  <published>{_feed_dt(p["date"])}</published>
+  <updated>{_feed_dt(p["date"])}</updated>
+  <author><name>{esc(SITE.get("author", ""))}</name><email>{esc(SITE.get("email", ""))}</email></author>
   <category term="{esc(p["category"])}"/>
-  <summary>{desc}</summary>
+  <summary>{esc(desc)}</summary>
+  <content type="html">{_cd(full)}</content>
 </entry>''')
+    site_email = f'<email>{esc(SITE.get("email", ""))}</email>' if SITE.get("email") else ""
     xml = f'''<?xml version="1.0" encoding="utf-8"?>
-<feed xmlns="http://www.w3.org/2005/Atom">
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/">
   <title>{esc(SITE["title"])}</title>
   <subtitle>{esc(SITE.get("description", ""))}</subtitle>
   <link href="{base}"/>
   <link href="{base}feed.xml" rel="self"/>
-  <updated>{pub}</updated>
+  <updated>{today}</updated>
   <id>{base}</id>
-  <author><name>{esc(SITE.get("author", ""))}</name></author>
+  <author><name>{esc(SITE.get("author", ""))}</name>{site_email}</author>
 {chr(10).join(entries)}
 </feed>'''
     return xml
 
 
 def render_sitemap(posts, pages, docs):
+    from urllib.parse import quote
     base = SITE.get("base", "").rstrip("/") + "/"
-    urls = [
-        f"  <url><loc>{base}</loc></url>",
-        f"  <url><loc>{base}archive/</loc></url>",
-        f"  <url><loc>{base}tags/</loc></url>",
-        f"  <url><loc>{base}search/</loc></url>",
-    ]
+    today = datetime.date.today().isoformat()
+    q = lambda u: base + quote(u, safe="/:?=&%")
+
+    def url_entry(path, lastmod=None, freq="weekly", pri="0.8"):
+        if lastmod is None:
+            lm = today
+        elif isinstance(lastmod, (datetime.date, datetime.datetime)):
+            lm = lastmod.isoformat()
+        else:
+            lm = str(lastmod)
+        return (f'  <url><loc>{q(path)}</loc><lastmod>{lm}</lastmod>'
+                f'<changefreq>{freq}</changefreq><priority>{pri}</priority></url>')
+
+    urls = [url_entry("", today, "daily", "1.0"),
+            url_entry("archive/", freq="weekly", pri="0.8"),
+            url_entry("tags/", freq="weekly", pri="0.6"),
+            url_entry("search/", freq="monthly", pri="0.3")]
     if docs:
-        urls.append(f"  <url><loc>{base}docs/</loc></url>")
+        urls.append(url_entry("docs/", freq="weekly", pri="0.9"))
     for pg in pages:
-        urls.append(f'  <url><loc>{base}{pg["url"]}</loc></url>')
+        urls.append(url_entry(pg["url"], freq="weekly", pri="0.7"))
     for d in docs:
-        urls.append(f'  <url><loc>{base}{d["url"]}</loc></url>')
+        urls.append(url_entry(d["url"], d.get("date") or today, freq="monthly", pri="0.8"))
     for p in posts:
-        urls.append(f'  <url><loc>{base}{p["url"]}</loc></url>')
-    return '<?xml version="1.0" encoding="utf-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' + "\n".join(urls) + "\n</urlset>"
+        urls.append(url_entry(p["url"], p["date"], freq="monthly", pri="1.0"))
+    return ('<?xml version="1.0" encoding="utf-8"?>\n'
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+            + "\n".join(urls) + "\n</urlset>")
 
 
 def render_search_index(posts, pages, docs=None):
@@ -1115,7 +1227,20 @@ def build():
     write("feed.xml", render_feed(posts))
     write("sitemap.xml", render_sitemap(posts, pages, docs))
     write("search_index.json", render_search_index(posts, pages, docs))
-    write("robots.txt", "User-agent: *\nAllow: /\n")
+    # robots: 放行抓取 + 声明 sitemap; 绝不排除 IndexNow key 文件
+    base_url = SITE.get("base", "").rstrip("/") + "/"
+    robots = ("User-agent: *\n"
+              "Allow: /\n"
+              "Disallow: /go/\n"
+              "Sitemap: %ssitemap.xml\n" % base_url)
+    write("robots.txt", robots)
+    # 防止 GitHub Pages 的 Jekyll 干扰静态构建产物
+    write(".nojekyll", "")
+    # IndexNow 密钥文件: 配置 seo.indexnow_key 后构建即生成, 供 Bing/IndexNow 爬虫验证
+    seo_cfg = CONFIG.get("seo") or {}
+    ik = (seo_cfg.get("indexnow_key") or "").strip()
+    if ik and re.fullmatch(r"[A-Za-z0-9_-]{6,64}", ik):
+        write("%s.txt" % ik, ik)
 
     # 静态资源
     src_static = THEME / "static"

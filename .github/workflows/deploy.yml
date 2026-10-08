@@ -29,6 +29,47 @@ jobs:
       - name: Build static site
         run: python3 build.py
 
+      - name: Ping search engines (IndexNow / Baidu)
+        run: |
+          python3 - <<'PY'
+          import json, re, urllib.request, urllib.parse, urllib.error
+          cfg = json.load(open('config.json'))
+          seo = cfg.get('seo') or {}
+          base = cfg['site'].get('base', '').rstrip('/') + '/'
+          locs = re.findall(r'<loc>(.*?)</loc>', open('dist/sitemap.xml', encoding='utf-8').read())
+          if not locs:
+              locs = [base]
+          print('URLs to ping:', len(locs))
+          ik = (seo.get('indexnow_key') or '').strip()
+          if ik:
+              keyfile = base + ik + '.txt'
+              body = json.dumps({'host': base, 'key': ik, 'keyLocation': keyfile, 'urlList': locs}).encode()
+              try:
+                  req = urllib.request.Request('https://api.indexnow.org/indexnow', data=body,
+                                               headers={'Content-Type': 'application/json; charset=utf-8'}, method='POST')
+                  with urllib.request.urlopen(req, timeout=20) as r:
+                      print('IndexNow ->', r.status)
+              except urllib.error.HTTPError as e:
+                  print('IndexNow HTTPError ->', e.code, e.read().decode()[:200])
+              except Exception as e:
+                  print('IndexNow error ->', type(e).__name__, str(e)[:200])
+          else:
+              print('IndexNow skipped: seo.indexnow_key is empty')
+          bt = (seo.get('baidu_token') or '').strip()
+          if bt:
+              payload = '\n'.join(locs).encode()
+              try:
+                  req = urllib.request.Request(
+                      'https://data.zz.baidu.com/urls?site=' + urllib.parse.quote(base, safe='') + '&token=' + bt,
+                      data=payload, headers={'Content-Type': 'text/plain'}, method='POST')
+                  with urllib.request.urlopen(req, timeout=20) as r:
+                      print('Baidu ->', r.status, r.read().decode()[:200])
+              except Exception as e:
+                  print('Baidu error ->', type(e).__name__, str(e)[:200])
+          else:
+              print('Baidu push skipped: seo.baidu_token is empty (fill it in config.json)')
+          PY
+
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
