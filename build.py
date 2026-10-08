@@ -137,7 +137,7 @@ class Markdown:
         def repl_link(m):
             before, alt, url, title, after = m.group(1), m.group(2), m.group(3), m.group(4), m.group(5)
             if before and before.endswith("!"):
-                return before[:-1] + f'<img src="{esc(url)}" alt="{esc(alt)}" loading="lazy">' + (f'<span class="img-cap">{esc(title)}</span>' if title else "")
+                return before[:-1] + f'<img src="{esc(url)}" alt="{esc(alt)}" loading="lazy" decoding="async">' + (f'<span class="img-cap">{esc(title)}</span>' if title else "")
             cap = self.inline(alt)
             t = f' title="{esc(title)}"' if title else ""
             return f'<a href="{esc(url)}" target="_blank" rel="noopener nofollow"{t}>{cap}</a>' + after
@@ -278,7 +278,10 @@ class Markdown:
 
 
 def md_to_html(text):
-    return Markdown().render(text)
+    out = Markdown().render(text)
+    # 正文视频默认 metadata 预加载, 不让整片视频阻塞首屏
+    out = re.sub(r"<video\b(?![^>]*\bpreload=)", '<video preload="metadata"', out)
+    return out
 
 
 # ------------------------------------------------------------ 读取内容 ----
@@ -585,7 +588,8 @@ def analytics_html():
     provider = cfg.get("provider", "")
     script = cfg.get("script", "")
     if provider == "busuanzi":
-        return '''<div class="site-stats" aria-label="站点统计">
+        return '''<link rel="preconnect" href="https://busuanzi.ibruce.info" crossorigin>
+<div class="site-stats" aria-label="站点统计">
   <span>已运行 <span id="busuanzi_value_site_uv"></span> 天</span>
   <span>· 访问 <span id="busuanzi_value_site_pv"></span></span>
 </div>
@@ -622,7 +626,7 @@ def comments_html():
     data-input-position="top"
     data-theme="preferred_color_scheme"
     data-lang="zh-CN"
-    data-loading="lazy"
+    data-loading="lazy" decoding="async"
     crossorigin="anonymous" async>
   </script>
 </section>'''
@@ -645,7 +649,7 @@ def render_index(posts, page_no=1, per_page=6):
             for t in p["tags"][:4])
         cover_html = ""
         if p.get("cover"):
-            cover_html = f'<div class="card-cover"><img src="{esc(p["cover"])}" alt="" loading="lazy"></div>'
+            cover_html = f'<div class="card-cover"><img src="{esc(p["cover"])}" alt="" loading="lazy" decoding="async"></div>'
         else:
             cover_html = '<div class="card-cover card-cover-placeholder"><span></span></div>'
         cards.append(f'''
@@ -694,7 +698,7 @@ def render_index(posts, page_no=1, per_page=6):
             feats_html = []
             for p in feats:
                 if p.get("cover"):
-                    fcov = f'<img src="{esc(p["cover"])}" alt="" loading="lazy">'
+                    fcov = f'<img src="{esc(p["cover"])}" alt="" loading="lazy" decoding="async">'
                 else:
                     fcov = '<span class="featured-cover-placeholder"></span>'
                 feats_html.append(f'''
@@ -910,7 +914,7 @@ def render_links(friends, submit_url=""):
         cards = []
         for f in friends:
             avatar = f.get("avatar") or ""
-            img = f'<img src="{esc(avatar)}" alt="" loading="lazy">' if avatar else f'<span class="avatar-ph">{esc((f.get("name") or "友")[0])}</span>'
+            img = f'<img src="{esc(avatar)}" alt="" loading="lazy" decoding="async">' if avatar else f'<span class="avatar-ph">{esc((f.get("name") or "友")[0])}</span>'
             cards.append(f'''
 <li class="friend-card">
   <div class="friend-avatar">{img}</div>
@@ -1151,6 +1155,15 @@ def render_search_index(posts, pages, docs=None):
 
 # --------------------------------------------------------------- 构建 ----
 
+def minify_css(text):
+    """轻量 CSS 压缩: 去注释、折叠空白、去掉冗余分隔符 (仅用于构建期产物)"""
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"\s*([{}:;,>])\s*", r"\1", text)
+    text = re.sub(r";}", "}", text)
+    return text.strip()
+
+
 def write(path, content, root=DIST):
     fp = root / path
     fp.parent.mkdir(parents=True, exist_ok=True)
@@ -1246,6 +1259,9 @@ def build():
     src_static = THEME / "static"
     if src_static.exists():
         shutil.copytree(src_static, DIST / "static")
+        # 构建期压缩 CSS, 减小首屏阻塞传输量
+        for css_fp in (DIST / "static" / "css").rglob("*.css"):
+            css_fp.write_text(minify_css(css_fp.read_text(encoding="utf-8")), encoding="utf-8")
 
     print(f"[OK] 共生成 {len(posts)} 篇文章, {len(pages)} 个页面, {len(docs)} 篇文档, {len(friends)} 个友链, {len(forms)} 个表单, {len(links)} 条短链, 分页 {total_pages} 页")
     print(f"[OK] 站点输出目录: {DIST}")
