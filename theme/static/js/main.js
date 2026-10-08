@@ -198,7 +198,8 @@
     function update() {
       var scrollTop = window.scrollY || document.documentElement.scrollTop;
       var height = document.documentElement.scrollHeight - window.innerHeight;
-      if (bar) bar.style.width = (height > 0 ? (scrollTop / height) * 100 : 0) + '%';
+      var pct = height > 0 ? (scrollTop / height) * 100 : 0;
+      if (bar && bar.firstElementChild) bar.firstElementChild.style.width = pct + '%';
       if (topBtn) topBtn.classList.toggle('show', scrollTop > 480);
       ticking = false;
     }
