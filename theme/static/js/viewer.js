@@ -24,6 +24,36 @@
     return /^(https?:)?\/\//i.test(url) && !isSameOrigin(url);
   }
 
+  /* 文件名提取: 去掉查询/锚点后取末段并解码; 目录结尾回退取上一段 */
+  function fileNameOf(url) {
+    if (!url) return '';
+    var clean = String(url).split('?')[0].split('#')[0];
+    var segs = clean.split(/[\\/]/).filter(Boolean);
+    var name = segs.pop() || '';
+    try {
+      name = decodeURIComponent(name);
+    } catch (e) { /* 保留原样 */ }
+    return name.trim();
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  /* 底部命名条: 始终显示文件名, 有 alt 且不同时并列展示 */
+  function setCaption(item) {
+    if (!caption) return;
+    var src = (typeof item === 'string') ? item : (item && item.src);
+    var alt = (item && typeof item === 'object' && item.alt) ? String(item.alt).trim() : '';
+    var name = fileNameOf(src);
+    var parts = [];
+    if (name) parts.push('<span class="vf-file">' + escapeHtml(name) + '</span>');
+    if (alt && alt.toLowerCase() !== name.toLowerCase()) {
+      parts.push('<span class="vf-alt">' + escapeHtml(alt) + '</span>');
+    }
+    caption.innerHTML = parts.join('');
+  }
+
   /* ---------- 链接策略: 站外新标签, 站内当前页 ---------- */
   document.addEventListener('click', function (e) {
     var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
@@ -149,7 +179,7 @@
   function showIndex(i) {
     if (!state || i < 0 || i >= state.list.length) return;
     state.index = i;
-    caption.textContent = state.list[i].alt || '';
+    setCaption(state.list[i]);
     var meta = toolbar.querySelector('.viewer-meta');
     if (meta) meta.textContent = (i + 1) + ' / ' + state.list.length;
     if (state.kind === 'image') renderImage();
@@ -187,7 +217,7 @@
       g.setAttribute('title', '在线文档预览');
       content.appendChild(g);
     }
-    caption.textContent = '';
+    setCaption(url);
   }
 
   function openViewer(kind, list, index) {

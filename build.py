@@ -11,6 +11,10 @@ import re
 import shutil
 import html
 import datetime
+import urllib.request
+import urllib.parse
+import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -487,6 +491,211 @@ def seo_meta(title, description, page_url="", page_type="website", date_iso="", 
     return "\n".join(h)
 
 
+# ------------------------------------------------------------ 侧栏数据层 ----
+
+def sidebar_cfg():
+    return CONFIG.get("sidebar_right") or {}
+
+
+def right_bar_width():
+    """右侧栏宽度(px), 由 config.sidebar_right.width 控制, 注入 CSS 变量"""
+    try:
+        w = int(sidebar_cfg().get("width") or 300)
+    except (TypeError, ValueError):
+        w = 300
+    return 220 if w < 220 else (480 if w > 480 else w)
+
+
+def toc_position():
+    """文章目录位置: left(左侧栏) / right(右侧栏 widget) / hidden(隐藏)"""
+    return (sidebar_cfg().get("toc_position") or "left").lower()
+
+
+def sidebar_widgets(page_type):
+    """解析某页面类型的右侧栏 widget 列表。
+    优先 pages[page_type].widgets; 兼容旧布尔开关(show_latest/show_tags/show_archive);
+    monitor 受独立开关(monitor.enabled/widget)约束, 在任何来源里都被过滤。"""
+    cfg = sidebar_cfg()
+    if not cfg.get("enabled"):
+        return []
+    spec = (cfg.get("pages") or {}).get(page_type)
+    ws = None
+    if isinstance(spec, dict):
+        ws = spec.get("widgets")
+    elif isinstance(spec, list):
+        ws = spec
+    if ws is None:
+        ws = []
+        if cfg.get("show_latest", True):
+            ws.append("latest")
+        if cfg.get("show_tags", True):
+            ws.append("tags")
+        if cfg.get("show_archive", True):
+            ws.append("archive")
+        mon = CONFIG.get("monitor") or {}
+        if mon.get("enabled") and mon.get("widget", True):
+            ws.append("monitor")
+    if not isinstance(ws, list):
+        ws = []
+    mon = CONFIG.get("monitor") or {}
+    if "monitor" in ws and not (mon.get("enabled") and mon.get("widget", True)):
+        ws = [w for w in ws if w != "monitor"]
+    return [w for w in ws if isinstance(w, str)]
+
+
+def toc_html(headings, title="文章目录"):
+    """渲染目录 HTML (侧栏部件), headings = [(level, anchor_id, text)]"""
+    if not headings:
+        return ""
+    items = []
+    for lv, aid, text in headings:
+        cls = "toc-h3" if lv >= 3 else ""
+        items.append(f'<a class="{cls}" href="#{aid}">{text}</a>')
+    return ('<nav class="side-toc"><div class="side-toc-title">' + esc(title)
+            + '</div><div class="side-toc-links">' + "".join(items) + "</div></nav>")
+
+
+def friend_avatar(f):
+    """友链头像: 配置 avatar 优先; 否则回退到站点 favicon 服务 (duckduckgo, 免费无 key)"""
+    av = (f.get("avatar") or "").strip()
+    if av:
+        return esc(av)
+    m = re.match(r"^https?://([^/]+)", (f.get("url") or "").strip())
+    if m:
+        return "https://icons.duckduckgo.com/ip3/%s.ico" % esc(m.group(1))
+    return ""
+
+
+def friend_avatar_html(f):
+    """友链头像 HTML: 配置 avatar 优先, 否则 favicon 服务; 加载失败回退首字母占位"""
+    av = friend_avatar(f)
+    ph = esc((f.get("name") or "友")[0])
+    if av:
+        return (f'<span class="friend-avatar"><img src="{av}" alt="" loading="lazy" decoding="async" '
+                f'onerror="this.style.display=\'none\';var s=this.nextElementSibling;if(s){{s.style.display=\'flex\';}}">'
+                f'<span class="avatar-ph" style="display:none">{ph}</span></span>')
+    return f'<span class="friend-avatar"><span class="avatar-ph">{ph}</span></span>'
+
+
+def render_circle_block(circle):
+    """友链朋友圈: 聚合各友链 RSS 最新条目展示; friend_rss.enabled 控制开关"""
+    fr = CONFIG.get("friend_rss") or {}
+    if not fr.get("enabled"):
+        return ""
+    max_items = max(1, int(fr.get("max_items", 5)))
+    blocks = []
+    for f, items in circle:
+        rows = []
+        for it in items[:max_items]:
+            link = (it.get("link") or "").strip()
+            title = (it.get("title") or link).strip()
+            if not link or not title:
+                continue
+            rows.append(f'<li><a href="{esc(link)}" target="_blank" rel="noopener nofollow">{esc(title)}</a>'
+                        f'<span class="w-date">{esc(it.get("pub") or "")}</span></li>')
+        if not rows:
+            continue
+        head = (f'<div class="circle-head">{friend_avatar_html(f)}'
+                f'<a href="{esc(f.get("url", "#"))}" target="_blank" rel="noopener nofollow"><b>{esc(f.get("name", ""))}</b></a>')
+        if (f.get("rss") or "").strip():
+            head += f'<a class="circle-feed" href="{esc(f["rss"])}" target="_blank" rel="noopener nofollow" title="订阅该友链 RSS">RSS</a>'
+        head += "</div>"
+        blocks.append(f'<div class="circle-friend">{head}<ul class="widget-list">{"".join(rows)}</ul></div>')
+    if not blocks:
+        return ('<section class="friend-circle"><h3 class="widget-h">友链朋友圈</h3>'
+                '<p class="circle-empty">暂无动态：为友链配置 RSS 订阅地址后，这里会自动聚合他们的最新文章。</p></section>')
+    return ('<section class="friend-circle"><h3 class="widget-h">友链朋友圈</h3>'
+            '<div class="circle-grid">' + "".join(blocks) + "</div></section>")
+
+
+def powered_by_html():
+    """文章底部署名: Powered by <a>科技酱</a> & <a>OverCome</a>, 链接可配置"""
+    pb = (CONFIG.get("footer") or {}).get("powered_by") or {}
+    if not pb.get("enabled"):
+        return ""
+    tj, oc = pb.get("techjiang") or {}, pb.get("overcome") or {}
+    tj_name, oc_name = esc(tj.get("name", "科技酱")), esc(oc.get("name", "OverCome"))
+    tj_url, oc_url = esc(tj.get("url", "")), esc(oc.get("url", ""))
+    tj_html = f'<a href="{tj_url}" target="_blank" rel="noopener">{tj_name}</a>' if tj_url else tj_name
+    oc_html = f'<a href="{oc_url}" target="_blank" rel="noopener">{oc_name}</a>' if oc_url else oc_name
+    return f'<p class="powered-by">Powered by {tj_html} & {oc_html}</p>'
+
+
+# ------------------------------------------------- 友链朋友圈 (RSS 聚合) ----
+
+def _local(tag):
+    """取 XML 标签的本地名 (兼容 {namespace}tag / tag)"""
+    return tag.rsplit("}", 1)[-1] if tag else ""
+
+
+def _feed_child(node, names):
+    """在元素子节点中按本地名匹配第一个 (兼容 RSS2/Atom/RDF 命名空间)"""
+    for c in node:
+        if c.tag and _local(c.tag) in names:
+            return c
+    return None
+
+
+def _feed_text(node):
+    if node is None or node.text is None:
+        return ""
+    return re.sub(r"\s+", " ", node.text).strip()
+
+
+def parse_feed_bytes(data):
+    """解析 RSS 2.0 / Atom 源, 返回 [{title, link, pub}], 最多 20 条"""
+    root = ET.fromstring(data)
+    items = []
+    for node in root.iter():
+        if _local(node.tag) not in ("item", "entry"):
+            continue
+        title = _feed_text(_feed_child(node, ["title"]))
+        link = ""
+        lc = _feed_child(node, ["link"])
+        if lc is not None:
+            link = lc.get("href") or lc.text or ""
+            link = link.strip()
+        pub = _feed_text(_feed_child(node, ["pubDate", "published", "updated", "date"]))
+        if title or link:
+            items.append({"title": title, "link": link, "pub": pub})
+        if len(items) >= 20:
+            break
+    return items
+
+
+def fetch_friend_circle(friends):
+    """构建期抓取各友链 RSS (仅抓取配置了 rss 的友链), 失败安全降级。
+    返回 (pairs, ok_count, total_count); 永不因网络错误中断构建。"""
+    fr = CONFIG.get("friend_rss") or {}
+    if not fr.get("enabled"):
+        return [], 0, 0
+    timeout = int(fr.get("fetch_timeout", 6))
+    concurrency = max(1, int(fr.get("concurrency", 4)))
+    candidates = [f for f in friends if (f.get("rss") or "").strip()
+                  and (f.get("rss") or "").startswith(("http://", "https://"))]
+    if not candidates:
+        return [], 0, 0
+    ok = [0]
+
+    def grab(f):
+        url = f["rss"].strip()
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "OverCome/%s (+%s)" % (SITE.get("title", ""), SITE.get("base", ""))})
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                data = resp.read(300000)
+            items = parse_feed_bytes(data)
+            ok[0] += 1
+            return (f, items)
+        except Exception:
+            return (f, [])
+
+    pairs = []
+    with ThreadPoolExecutor(max_workers=concurrency) as ex:
+        for res in ex.map(grab, candidates):
+            pairs.append(res)
+    return pairs, ok[0], len(candidates)
+
+
 class Renderer:
     """root 前缀: 空 = 根目录页面; '../' = 一级子目录; '../../' = 二级子目录"""
 
@@ -496,7 +705,7 @@ class Renderer:
         self.social = CONFIG.get("social", {})
         self.dist = DIST
 
-    def page(self, title, body, *, root, active="", description="", extra_head="", side_toc="", show_right=True, seo=None):
+    def page(self, title, body, *, root, active="", description="", extra_head="", side_toc="", show_right=True, seo=None, page_type="home", toc="", rel=None):
         nav_html = []
         for item in self.nav:
             url = item.get("url", "")
@@ -514,7 +723,15 @@ class Renderer:
                 icons += f'<a class="social-link" href="{esc(href)}" target="_blank" rel="noopener nofollow" aria-label="{esc(key)}">{esc(key)}</a>'
             if icons:
                 social_html = f'<div class="social">{icons}</div>'
-        right_html = self.right_bar_html(root) if show_right else ""
+        # 目录位置: left -> 左侧栏(side_toc); right -> 置入右侧栏首 widget; hidden -> 不渲染
+        pos = toc_position()
+        if pos == "hidden":
+            side_toc, toc = "", ""
+        elif pos == "right":
+            side_toc = ""
+        elif not side_toc and toc:
+            side_toc = toc
+        right_html = self.right_bar_html(root, page_type, toc=toc if pos == "right" else "", rel=rel) if show_right else ""
         if seo is None:
             seo = {}
         _surl = seo.get("url", "")
@@ -532,6 +749,7 @@ class Renderer:
             .replace("{{social}}", social_html) \
             .replace("{{side_toc}}", side_toc) \
             .replace("{{right_bar}}", right_html) \
+            .replace("{{right_w}}", str(right_bar_width())) \
             .replace("{{site_year}}", str(datetime.date.today().year)) \
             .replace("{{site_author}}", esc(SITE.get("author", ""))) \
             .replace("{{extra_head}}", extra_head) \
@@ -540,41 +758,49 @@ class Renderer:
             .replace("{{assets_version}}", assets_version()) \
             .replace("{{content}}", body)
 
-    def right_bar_html(self, root):
-        """右侧栏组件 (最新文章 / 标签云 / 归档 / 简介), 由 config.sidebar_right 控制, 可整体开关"""
-        cfg = CONFIG.get("sidebar_right") or {}
-        if not cfg.get("enabled"):
+    def right_bar_html(self, root, page_type="home", toc="", rel=None):
+        """右侧栏组件, widgets 顺序与内容由 config.sidebar_right.pages 定义
+        支持: latest / tags / archive / monitor / toc / related"""
+        ws = sidebar_widgets(page_type)
+        if not ws:
             return ""
+        if toc and "toc" not in ws:
+            ws = ["toc"] + ws
         widgets = []
-        # 最新文章
-        if cfg.get("show_latest", True):
-            n = int(cfg.get("latest_count", 5))
-            lst = [p for p in _ALL_POSTS if not p.get("pinned")][:n] or _ALL_POSTS[:n]
-            items = "".join(
-                f'<li><a href="{root}{p["url"]}">{esc(p["title"])}</a><span class="w-date">{p["date_str"]}</span></li>'
-                for p in lst)
-            if lst:
-                widgets.append(f'<div class="widget"><h3>最新文章</h3><ul class="widget-list">{items}</ul></div>')
-        # 标签云
-        if cfg.get("show_tags", True):
-            _, tags, _ = compute_indexes(_ALL_POSTS)
-            top = sorted(tags.items(), key=lambda kv: -len(kv[1]))[:cfg.get("tags_count", 16)]
-            chips = "".join(
-                f'<a class="chip chip-tag" href="{root}tags/{slugify(t)}/">{esc(t)}<em>{len(ps)}</em></a>'
-                for t, ps in top)
-            if chips:
-                widgets.append(f'<div class="widget"><h3>标签</h3><div class="widget-tags">{chips}</div></div>')
-        # 归档
-        if cfg.get("show_archive", True):
-            widgets.append(
-                f'<div class="widget"><h3>归档</h3><ul class="widget-list"><li><a href="{root}archive/">全部文章 ({len(_ALL_POSTS)})</a><span class="w-date">{SITE["since"]} 至今</span></li></ul></div>')
-        # 站点监测 (延迟/状态, 独立开关, 与左侧栏底部统计互不影响)
-        mon = CONFIG.get("monitor") or {}
-        if mon.get("enabled") and mon.get("widget", True):
-            targets = json.dumps(mon.get("targets", []), ensure_ascii=False)
-            widgets.append(f'''<div class="widget"><h3>站点监测</h3>
+        for w in ws:
+            if w == "latest":
+                n = int(sidebar_cfg().get("latest_count", 5))
+                lst = [p for p in _ALL_POSTS if not p.get("pinned")][:n] or _ALL_POSTS[:n]
+                items = "".join(
+                    f'<li><a href="{root}{p["url"]}">{esc(p["title"])}</a><span class="w-date">{p["date_str"]}</span></li>'
+                    for p in lst)
+                if lst:
+                    widgets.append(f'<div class="widget"><h3>最新文章</h3><ul class="widget-list">{items}</ul></div>')
+            elif w == "tags":
+                _, tags, _ = compute_indexes(_ALL_POSTS)
+                top = sorted(tags.items(), key=lambda kv: -len(kv[1]))[:int(sidebar_cfg().get("tags_count", 16))]
+                chips = "".join(
+                    f'<a class="chip chip-tag" href="{root}tags/{slugify(t)}/">{esc(t)}<em>{len(ps)}</em></a>'
+                    for t, ps in top)
+                if chips:
+                    widgets.append(f'<div class="widget"><h3>标签</h3><div class="widget-tags">{chips}</div></div>')
+            elif w == "archive":
+                widgets.append(
+                    f'<div class="widget"><h3>归档</h3><ul class="widget-list"><li><a href="{root}archive/">全部文章 ({len(_ALL_POSTS)})</a><span class="w-date">{SITE["since"]} 至今</span></li></ul></div>')
+            elif w == "monitor":
+                mon = CONFIG.get("monitor") or {}
+                targets = json.dumps(mon.get("targets", []), ensure_ascii=False)
+                widgets.append(f'''<div class="widget"><h3>站点监测</h3>
 <div class="monitor" id="monitor-box" data-targets='{targets}'></div>
 <script src="{root}static/js/monitor.js?v={assets_version()}" defer></script></div>''')
+            elif w == "toc" and toc:
+                widgets.append(f'<div class="widget widget-toc">{toc}</div>')
+            elif w == "related" and rel:
+                items = "".join(
+                    f'<li><a href="{root}posts/{p["slug"]}/">{esc(p["title"])}</a><span class="w-date">{p["date_str"]}</span></li>'
+                    for p in rel)
+                if items:
+                    widgets.append(f'<div class="widget"><h3>相关阅读</h3><ul class="widget-list">{items}</ul></div>')
         if not widgets:
             return ""
         return '<aside class="right-bar" aria-label="侧边栏">' + "".join(widgets) + "</aside>"
@@ -728,13 +954,7 @@ def render_post(post, posts):
             next_p = posts[idx - 1] if idx > 0 else None              # 更新的
             break
 
-    side_toc = ""
-    if post["headings"]:
-        items = []
-        for lv, aid, text in post["headings"]:
-            cls = "toc-h3" if lv >= 3 else ""
-            items.append(f'<a class="{cls}" href="#{aid}">{text}</a>')
-        side_toc = '<nav class="side-toc"><div class="side-toc-title">文章目录</div><div class="side-toc-links">' + "".join(items) + "</div></nav>"
+    toc = toc_html(post["headings"], "文章目录")
 
     tags_html = "".join(
         f'<a class="chip chip-tag" href="{root}tags/{slugify(t)}/">{esc(t)}</a>'
@@ -751,6 +971,8 @@ def render_post(post, posts):
             for p in rel)
         rel_html = f'<section class="related"><h3>相关阅读</h3><ul>{items}</ul></section>'
 
+    powered_html = powered_by_html()
+
     article = f'''
 <article class="post">
   <header class="post-header">
@@ -765,13 +987,14 @@ def render_post(post, posts):
   <div class="post-layout">
     <div class="post-body">{post["content_html"]}</div>
   </div>
-  <footer class="post-footer">
+<footer class="post-footer">
     <nav class="post-nav">{prev_html}{next_html}</nav>
   </footer>
   {rel_html}
-</article>''' + comments_html()
+  {powered_html}
+ </article>''' + comments_html()
     return r.page(post["title"], article, root=root, active="",
-                  description=post.get("summary", ""), side_toc=side_toc,
+                  description=post.get("summary", ""), toc=toc, page_type="post", rel=rel,
                   extra_head=f'<link rel="stylesheet" href="../../static/css/highlight.css?v={assets_version()}">',
                   seo={"url": "posts/%s/" % post["slug"], "type": "article",
                        "date": post["date"].isoformat(), "image": post.get("cover", "")})
@@ -782,6 +1005,7 @@ def render_page(page):
     body = f'<article class="page post"><header class="post-header"><h1 class="page-title">{esc(page["title"])}</h1></header><div class="post-body">{page["content_html"]}</div></article>'
     surl = "" if page["slug"] == "index" else page["slug"] + "/"
     return r.page(page["title"], body, root="../", active="page", description=SITE.get("description", ""),
+                  page_type="page",
                   seo={"url": surl, "type": "webpage"})
 
 
@@ -795,7 +1019,7 @@ def render_archive(posts):
             for p in archive[key])
         html_parts.append(f'<section class="archive-group"><h2>{esc(key)} <em>{len(archive[key])}</em></h2><ul>{items}</ul></section>')
     body = f'<div class="page post"><header class="post-header"><h1 class="page-title">归档</h1><p class="page-sub">共 {len(posts)} 篇文章</p></header><div class="archive">{"".join(html_parts)}</div></div>'
-    return r.page("归档", body, root="../", active="archive", seo={"url": "archive/"})
+    return r.page("归档", body, root="../", active="archive", page_type="archive", seo={"url": "archive/"})
 
 
 def render_tags(posts):
@@ -806,7 +1030,7 @@ def render_tags(posts):
         size = 1 + min(2, len(ps) // 3)
         items.append(f'<a class="tag-cloud tag-{size}" href="../tags/{slugify(tag)}/">{esc(tag)}<em>{len(ps)}</em></a>')
     body = f'<div class="page post"><header class="post-header"><h1 class="page-title">标签</h1></header><div class="tag-cloud-wrap">{"".join(items)}</div></div>'
-    return r.page("标签", body, root="../", active="tags", seo={"url": "tags/"})
+    return r.page("标签", body, root="../", active="tags", page_type="tags", seo={"url": "tags/"})
 
 
 def render_tag(tag, posts):
@@ -816,7 +1040,7 @@ def render_tag(tag, posts):
         f'<li><span class="date">{p["date_str"]}</span><a href="{root}posts/{p["slug"]}/">{esc(p["title"])}</a></li>'
         for p in posts)
     body = f'<div class="page post"><header class="post-header"><h1 class="page-title">#{esc(tag)}</h1><p class="page-sub">{len(posts)} 篇文章</p></header><ul class="flat-list">{items}</ul></div>'
-    return r.page(f"标签: {tag}", body, root=root, active="tags", seo={"url": f"tags/{slugify(tag)}/"})
+    return r.page(f"标签: {tag}", body, root=root, active="tags", page_type="tags", seo={"url": f"tags/{slugify(tag)}/"})
 
 
 def render_category(cat, posts):
@@ -826,7 +1050,7 @@ def render_category(cat, posts):
         f'<li><span class="date">{p["date_str"]}</span><a href="{root}posts/{p["slug"]}/">{esc(p["title"])}</a></li>'
         for p in posts)
     body = f'<div class="page post"><header class="post-header"><h1 class="page-title">{esc(cat)}</h1><p class="page-sub">{len(posts)} 篇文章</p></header><ul class="flat-list">{items}</ul></div>'
-    return r.page(f"分类: {cat}", body, root=root, active="", seo={"url": f"categories/{slugify(cat)}/"})
+    return r.page(f"分类: {cat}", body, root=root, active="", page_type="category", seo={"url": f"categories/{slugify(cat)}/"})
 
 
 def render_search():
@@ -861,20 +1085,14 @@ def render_docs_index(docs):
             for d in groups[cat])
         blocks.append(f'<section class="archive-group"><h2>{esc(cat)} <em>{len(groups[cat])}</em></h2><ul>{items}</ul></section>')
     body = f'<div class="page post"><header class="post-header"><h1 class="page-title">文档</h1><p class="page-sub">共 {len(docs)} 篇文档</p></header><div class="archive">{"".join(blocks)}</div></div>'
-    return r.page("文档", body, root="../", active="docs", seo={"url": "docs/"})
+    return r.page("文档", body, root="../", active="docs", page_type="doc", seo={"url": "docs/"})
 
 
 def render_doc(doc, docs):
     """文档详情页 /docs/<slug>/: 含目录与文档内前后篇"""
     r = Renderer()
     root = "../../"
-    side_toc = ""
-    if doc["headings"]:
-        items = []
-        for lv, aid, text in doc["headings"]:
-            cls = "toc-h3" if lv >= 3 else ""
-            items.append(f'<a class="{cls}" href="#{aid}">{text}</a>')
-        side_toc = '<nav class="side-toc"><div class="side-toc-title">文档目录</div><div class="side-toc-links">' + "".join(items) + "</div></nav>"
+    toc = toc_html(doc["headings"], "文档目录")
     prev = next_d = None
     for idx, d in enumerate(docs):
         if d["slug"] == doc["slug"]:
@@ -899,13 +1117,13 @@ def render_doc(doc, docs):
   <footer class="post-footer"><nav class="post-nav">{prev_html}{next_html}</nav></footer>
 </article>'''
     return r.page(doc["title"], article, root=root, active="docs",
-                  description=doc.get("summary", ""), side_toc=side_toc,
+                  description=doc.get("summary", ""), toc=toc, page_type="doc",
                   seo={"url": "docs/%s/" % doc["slug"], "type": "article",
                        "date": doc["date"].isoformat() if doc.get("date") else ""})
 
 
-def render_links(friends, submit_url=""):
-    """友链页 /links/: 展示友链 + 站内自助提交表单 (提交后组装 GitHub Issue 预填请求)"""
+def render_links(friends, submit_url="", circle=None):
+    """友链页 /links/: 展示友链(带头像) + 友链朋友圈(RSS聚合) + 站内自助提交表单"""
     r = Renderer()
     root = "../"
     if not friends:
@@ -913,17 +1131,16 @@ def render_links(friends, submit_url=""):
     else:
         cards = []
         for f in friends:
-            avatar = f.get("avatar") or ""
-            img = f'<img src="{esc(avatar)}" alt="" loading="lazy" decoding="async">' if avatar else f'<span class="avatar-ph">{esc((f.get("name") or "友")[0])}</span>'
             cards.append(f'''
 <li class="friend-card">
-  <div class="friend-avatar">{img}</div>
+  {friend_avatar_html(f)}
   <div class="friend-meta">
     <a href="{esc(f.get("url", "#"))}" target="_blank" rel="noopener nofollow"><b>{esc(f.get("name", ""))}</b></a>
     <p>{esc(f.get("desc", ""))}</p>
   </div>
 </li>''')
         items = "".join(cards)
+    circle_block = render_circle_block(circle or [])
     repo = CONFIG.get("link_repo", "")
     # 站内自助提交表单: 无后端, 提交时把字段组装成 GitHub Issue 预填链接打开
     form_html = f'''<section class="link-submit">
@@ -959,8 +1176,8 @@ def render_links(friends, submit_url=""):
     submit_block = ""
     if submit_url:
         submit_block = f'<div class="link-submit"><p>想交换友链？<a class="btn" href="{esc(submit_url)}" target="_blank" rel="noopener nofollow">申请加入</a></p></div>'
-    body = f'<div class="page post"><header class="post-header"><h1 class="page-title">友情链接</h1><p class="page-sub">共 {len(friends)} 位伙伴</p></header><ul class="friend-list">{items}</ul>{submit_block}{form_html}</div>'
-    return r.page("友情链接", body, root=root, active="links", seo={"url": "links/"})
+    body = f'<div class="page post"><header class="post-header"><h1 class="page-title">友情链接</h1><p class="page-sub">共 {len(friends)} 位伙伴</p></header><ul class="friend-list">{items}</ul>{circle_block}{submit_block}{form_html}</div>'
+    return r.page("友情链接", body, root=root, active="links", page_type="links", seo={"url": "links/"})
 
 
 def render_survey(form):
@@ -1013,7 +1230,7 @@ def render_survey(form):
   <div class="survey-fields">{''.join(fields_html)}</div>
   <div class="form-actions"><button class="btn" type="submit">提交</button><span class="form-note">{note}</span></div>
 </form></div>{js}'''
-    return r.page(title, body, root=root, active="", description=note,
+    return r.page(title, body, root=root, active="", description=note, page_type="page",
                   seo={"url": "forms/" + slug + "/"})
 
 
@@ -1210,8 +1427,9 @@ def build():
     for d in docs:
         write(f"docs/{d['slug']}/index.html", render_doc(d, docs))
 
-    # 友链
-    write("links/index.html", render_links(friends, link_submit))
+    # 友链 (+ 朋友圈 RSS 聚合, 失败安全降级)
+    circle, c_ok, c_total = fetch_friend_circle(friends)
+    write("links/index.html", render_links(friends, link_submit, circle=circle))
 
     # 问卷 / 表单
     for form in forms:
@@ -1264,6 +1482,8 @@ def build():
             css_fp.write_text(minify_css(css_fp.read_text(encoding="utf-8")), encoding="utf-8")
 
     print(f"[OK] 共生成 {len(posts)} 篇文章, {len(pages)} 个页面, {len(docs)} 篇文档, {len(friends)} 个友链, {len(forms)} 个表单, {len(links)} 条短链, 分页 {total_pages} 页")
+    if c_total:
+        print(f"[OK] 友链朋友圈: 抓取成功 {c_ok}/{c_total} 个 RSS 源")
     print(f"[OK] 站点输出目录: {DIST}")
 
 

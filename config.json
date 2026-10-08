@@ -75,11 +75,25 @@
   },
   "sidebar_right": {
     "enabled": true,
+    "width": 320,
+    "toc_position": "left",
     "show_latest": true,
     "latest_count": 5,
     "show_tags": true,
     "tags_count": 16,
-    "show_archive": true
+    "show_archive": true,
+    "pages": {
+      "home": { "widgets": ["latest", "tags", "archive", "monitor"] },
+      "post": { "widgets": ["toc", "related", "latest", "tags"] },
+      "doc": { "widgets": ["toc", "latest", "tags"] },
+      "archive": { "widgets": ["latest", "tags", "archive"] },
+      "tags": { "widgets": ["latest", "archive"] },
+      "links": { "widgets": ["latest", "tags", "monitor"] },
+      "page": { "widgets": ["latest", "tags", "archive"] },
+      "search": { "widgets": [] },
+      "error": { "widgets": [] },
+      "category": { "widgets": ["latest", "tags"] }
+    }
   },
   "monitor": {
     "enabled": true,
@@ -102,12 +116,19 @@
     "twitter_handle": "",
     "og_image": ""
   },
+  "friend_rss": {
+    "enabled": true,
+    "max_items": 5,
+    "fetch_timeout": 6,
+    "concurrency": 4
+  },
   "friends": [
     {
       "name": "科技酱",
       "url": "https://github.com/techjiang",
       "desc": "独立开发者，OverCome 博客系统作者",
-      "avatar": ""
+      "avatar": "",
+      "rss": ""
     }
   ],
   "link_submit": "https://github.com/techjiang/OverCome/issues/new?title=%E7%94%B3%E8%AF%B7%E5%8F%8B%E9%93%BE&body=%E7%BD%91%E7%AB%99%E5%90%8D%E7%A7%B0%3A%0A%E7%BD%91%E5%9D%80%3A%0A%E7%AE%80%E4%BB%8B%3A%0A%E5%A4%B4%E5%83%8F%3A",
@@ -158,5 +179,18 @@
         }
       ]
     }
-  ]
+  ],
+  "footer": {
+    "powered_by": {
+      "enabled": true,
+      "techjiang": {
+        "name": "科技酱",
+        "url": "https://docs.asoe.cn"
+      },
+      "overcome": {
+        "name": "OverCome",
+        "url": "https://github.com/techjiang/OverCome"
+      }
+    }
+  }
 }

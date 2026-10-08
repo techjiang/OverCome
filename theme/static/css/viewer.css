@@ -63,15 +63,30 @@
   box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
 }
 .viewer-caption {
-  max-width: 80vw;
-  color: #cfd6e4;
+  position: absolute;
+  left: 50%;
+  bottom: 60px;
+  transform: translateX(-50%);
+  z-index: 5;
+  max-width: 84vw;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 18px;
+  border-radius: 999px;
+  background: rgba(20, 24, 34, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #e8ecf5;
   font-size: 13px;
   line-height: 1.5;
-  text-align: center;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  backdrop-filter: blur(6px);
+  pointer-events: none;
 }
+.viewer-caption .vf-file { font-weight: 600; letter-spacing: .02em; }
+.viewer-caption .vf-alt { color: #9aa5bb; font-size: 12px; }
 .viewer-toolbar {
   position: absolute;
   bottom: 0;
@@ -138,4 +153,5 @@
 @media (max-width: 640px) {
   .viewer-stage { padding: 40px 8px 56px; }
   .viewer-meta { display: none; }
+  .viewer-caption { bottom: 56px; max-width: 92vw; font-size: 12px; padding: 6px 14px; }
 }
