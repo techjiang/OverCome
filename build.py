@@ -813,7 +813,7 @@ def render_doc(doc, docs):
 
 
 def render_links(friends, submit_url=""):
-    """友链页 /links/"""
+    """友链页 /links/: 展示友链 + 站内自助提交表单 (提交后组装 GitHub Issue 预填请求)"""
     r = Renderer()
     root = "../"
     if not friends:
@@ -832,10 +832,42 @@ def render_links(friends, submit_url=""):
   </div>
 </li>''')
         items = "".join(cards)
+    repo = CONFIG.get("link_repo", "")
+    # 站内自助提交表单: 无后端, 提交时把字段组装成 GitHub Issue 预填链接打开
+    form_html = f'''<section class="link-submit">
+  <h3 class="widget-h">自助申请友链</h3>
+  <p class="link-submit-tip">填写以下信息提交申请，站长审核通过后会加入友链列表。请确保站点可正常访问、内容与本站互相尊重。</p>
+  <form id="friend-form" class="survey" novalidate>
+    <div class="survey-fields">
+      <label class="form-field"><span>网站名称 *</span><input type="text" name="name" required placeholder="你的站点名称"></label>
+      <label class="form-field"><span>网站地址 *</span><input type="url" name="url" required placeholder="https://example.com"></label>
+      <label class="form-field"><span>一句话简介</span><input type="text" name="desc" placeholder="站点定位或一句话介绍"></label>
+      <label class="form-field"><span>头像地址(可选)</span><input type="url" name="avatar" placeholder="https://example.com/avatar.png"></label>
+    </div>
+    <div class="form-actions">
+      <button class="btn" type="submit">提交申请</button>
+      <span class="form-note">提交后打开 GitHub Issue 预填模板，确认发送即完成申请</span>
+    </div>
+  </form>
+</section>
+<script>
+(function () {{
+  var form = document.getElementById('friend-form');
+  if (!form) return;
+  form.addEventListener('submit', function (ev) {{
+    ev.preventDefault();
+    var d = new FormData(form);
+    var name = d.get('name') || '', url = d.get('url') || '', desc = d.get('desc') || '', avatar = d.get('avatar') || '';
+    var body = '站点名称：' + name + '\\n站点地址：' + url + '\\n简介：' + desc + '\\n头像：' + avatar;
+    var issue = 'https://github.com/{esc(repo)}/issues/new?title=' + encodeURIComponent('申请友链：' + name) + '&body=' + encodeURIComponent(body);
+    window.open(issue, '_blank', 'noopener');
+  }});
+}})();
+</script>'''
     submit_block = ""
     if submit_url:
         submit_block = f'<div class="link-submit"><p>想交换友链？<a class="btn" href="{esc(submit_url)}" target="_blank" rel="noopener nofollow">申请加入</a></p></div>'
-    body = f'<div class="page post"><header class="post-header"><h1 class="page-title">友情链接</h1><p class="page-sub">共 {len(friends)} 位伙伴</p></header><ul class="friend-list">{items}</ul>{submit_block}</div>'
+    body = f'<div class="page post"><header class="post-header"><h1 class="page-title">友情链接</h1><p class="page-sub">共 {len(friends)} 位伙伴</p></header><ul class="friend-list">{items}</ul>{submit_block}{form_html}</div>'
     return r.page("友情链接", body, root=root, active="links")
 
 

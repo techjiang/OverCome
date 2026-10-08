@@ -62,6 +62,7 @@
     }
   ],
   "link_submit": "https://github.com/techjiang/OverCome/issues/new?title=%E7%94%B3%E8%AF%B7%E5%8F%8B%E9%93%BE&body=%E7%BD%91%E7%AB%99%E5%90%8D%E7%A7%B0%3A%0A%E7%BD%91%E5%9D%80%3A%0A%E7%AE%80%E4%BB%8B%3A%0A%E5%A4%B4%E5%83%8F%3A",
+  "link_repo": "techjiang/OverCome",
   "links": {
     "gh": "https://github.com/techjiang",
     "rd": "https://github.com/techjiang/OverCome"
