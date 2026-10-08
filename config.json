@@ -83,16 +83,68 @@
     "tags_count": 16,
     "show_archive": true,
     "pages": {
-      "home": { "widgets": ["latest", "tags", "archive", "monitor"] },
-      "post": { "widgets": ["toc", "related", "latest", "tags"] },
-      "doc": { "widgets": ["toc", "latest", "tags"] },
-      "archive": { "widgets": ["latest", "tags", "archive"] },
-      "tags": { "widgets": ["latest", "archive"] },
-      "links": { "widgets": ["latest", "tags", "monitor"] },
-      "page": { "widgets": ["latest", "tags", "archive"] },
-      "search": { "widgets": [] },
-      "error": { "widgets": [] },
-      "category": { "widgets": ["latest", "tags"] }
+      "home": {
+        "widgets": [
+          "latest",
+          "tags",
+          "archive",
+          "monitor"
+        ]
+      },
+      "post": {
+        "widgets": [
+          "toc",
+          "related",
+          "latest",
+          "tags"
+        ]
+      },
+      "doc": {
+        "widgets": [
+          "toc",
+          "latest",
+          "tags"
+        ]
+      },
+      "archive": {
+        "widgets": [
+          "latest",
+          "tags",
+          "archive"
+        ]
+      },
+      "tags": {
+        "widgets": [
+          "latest",
+          "archive"
+        ]
+      },
+      "links": {
+        "widgets": [
+          "latest",
+          "tags",
+          "monitor"
+        ]
+      },
+      "page": {
+        "widgets": [
+          "latest",
+          "tags",
+          "archive"
+        ]
+      },
+      "search": {
+        "widgets": []
+      },
+      "error": {
+        "widgets": []
+      },
+      "category": {
+        "widgets": [
+          "latest",
+          "tags"
+        ]
+      }
     }
   },
   "monitor": {
@@ -127,7 +179,7 @@
       "name": "科技酱",
       "url": "https://github.com/techjiang",
       "desc": "独立开发者，OverCome 博客系统作者",
-      "avatar": "",
+      "avatar": "https://github.com/techjiang.png?size=96",
       "rss": ""
     }
   ],
