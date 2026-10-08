@@ -66,12 +66,21 @@
     }
   }
   renderPerf();
-  /* DOMContentLoaded 与 load 触发后回填真实指标 (解决"就绪/加载 一直 '—'"的问题) */
+  /* DOMContentLoaded 与 load 触发后回填真实指标 (解决"就绪/加载 一直 '—'"的问题)
+     loadEventEnd / domContentLoadedEventEnd 在事件**结束后**才写入 PerformanceTiming,
+     因此监听器内需延迟一拍(短 setTimeout)再读取, 否则仍读到 0。 */
+  function later(fn) {
+    setTimeout(fn, 120);
+  }
   if (document.readyState === 'complete') {
-    renderPerf(true);
+    later(function () { renderPerf(true); });
   } else {
-    document.addEventListener('DOMContentLoaded', function () { renderPerf(true); }, { once: true });
-    window.addEventListener('load', function () { renderPerf(true); }, { once: true });
+    document.addEventListener('DOMContentLoaded', function () {
+      later(function () { renderPerf(true); });
+    }, { once: true });
+    window.addEventListener('load', function () {
+      later(function () { renderPerf(true); });
+    }, { once: true });
   }
 
   /* ---- 2) 目标探测 ---- */
