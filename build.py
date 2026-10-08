@@ -283,6 +283,7 @@ def load_posts():
         category = meta.get("category") or meta.get("categories") or "未分类"
         summary = meta.get("summary") or ""
         cover = meta.get("cover") or ""
+        pinned = str(meta.get("pinned", "")).lower() in ("true", "1", "yes", "置顶")
         content_html = md_to_html(body)
         word_count = len(re.sub(r"\s", "", body))
         reading_min = max(1, round(word_count / 420))
@@ -297,6 +298,7 @@ def load_posts():
             "category": category,
             "summary": summary,
             "cover": cover,
+            "pinned": pinned,
             "url": f"posts/{slug}/",
             "content_html": content_html,
             "content_text": re.sub(r"<[^>]+>", "", content_html),
@@ -305,7 +307,8 @@ def load_posts():
             "headings": tmp.headings,
             "status": "published",
         })
-    posts.sort(key=lambda p: p["date"], reverse=True)
+    # 置顶优先(True>False), 同组内按日期倒序
+    posts.sort(key=lambda p: (p["pinned"], p["date"]), reverse=True)
     return posts
 
 
@@ -397,7 +400,59 @@ class Renderer:
             .replace("{{site_year}}", str(datetime.date.today().year)) \
             .replace("{{site_author}}", esc(SITE.get("author", ""))) \
             .replace("{{extra_head}}", extra_head) \
+            .replace("{{analytics}}", analytics_html()) \
             .replace("{{content}}", body)
+
+
+def analytics_html():
+    """站点统计脚本注入 (不蒜子 / 自定义脚本), 默认关闭"""
+    cfg = CONFIG.get("analytics") or {}
+    if not cfg.get("enabled"):
+        return ""
+    provider = cfg.get("provider", "")
+    script = cfg.get("script", "")
+    if provider == "busuanzi":
+        return '''<div class="site-stats" aria-label="站点统计">
+  <span>已运行 <span id="busuanzi_value_site_uv"></span> 天</span>
+  <span>· 访问 <span id="busuanzi_value_site_pv"></span></span>
+</div>
+<script async src="https://busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script>'''
+    if script:
+        return f'''<div class="site-stats site-stats-custom"></div>
+<script async src="{esc(script)}"></script>'''
+    return ""
+
+
+def comments_html():
+    """Giscus 评论区块。在 giscus.app 为仓库生成配置后回填 repoId/categoryId 并设 enabled=true 即启用"""
+    cfg = CONFIG.get("comments") or {}
+    if not cfg.get("enabled"):
+        return ""
+    repo = cfg.get("repo", "")
+    repo_id = cfg.get("repoId", "")
+    category = cfg.get("category", "")
+    category_id = cfg.get("categoryId", "")
+    if not (repo and repo_id and category and category_id):
+        return ""
+    return f'''
+<section class="comments" id="comments">
+  <h3 class="comments-title">评论</h3>
+  <script src="https://giscus.app/client.js"
+    data-repo="{esc(repo)}"
+    data-repo-id="{esc(repo_id)}"
+    data-category="{esc(category)}"
+    data-category-id="{esc(category_id)}"
+    data-mapping="pathname"
+    data-strict="0"
+    data-reactions-enabled="1"
+    data-emit-metadata="0"
+    data-input-position="top"
+    data-theme="preferred_color_scheme"
+    data-lang="zh-CN"
+    data-loading="lazy"
+    crossorigin="anonymous" async>
+  </script>
+</section>'''
 
 
 def render_index(posts, page_no=1, per_page=6):
@@ -411,6 +466,7 @@ def render_index(posts, page_no=1, per_page=6):
     root = "" if page_no == 1 else "../../"
     cards = []
     for p in chunk:
+        pin_badge = '<span class="pin-badge" title="置顶文章">置顶</span>' if p.get("pinned") else ""
         tags_html = "".join(
             f'<a class="chip chip-tag" href="{root}tags/{slugify(t)}/">{esc(t)}</a>'
             for t in p["tags"][:4])
@@ -428,7 +484,7 @@ def render_index(posts, page_no=1, per_page=6):
       <a class="chip chip-cat" href="{root}categories/{slugify(p["category"])}/">{esc(p["category"])}</a>
       <span class="read-min">{p["reading_min"]} 分钟阅读 · {p["word_count"]} 字</span>
     </div>
-    <h2 class="card-title"><a href="{root}{p["url"]}">{esc(p["title"])}</a></h2>
+    <h2 class="card-title">{pin_badge}<a href="{root}{p["url"]}">{esc(p["title"])}</a></h2>
     <p class="card-summary">{esc(p["summary"] or p["content_text"][:120])}</p>
     <div class="card-tags">{tags_html}</div>
   </div>
@@ -510,7 +566,7 @@ def render_post(post, posts):
     <nav class="post-nav">{prev_html}{next_html}</nav>
   </footer>
   {rel_html}
-</article>'''
+</article>''' + comments_html()
     return r.page(post["title"], article, root=root, active="",
                   description=post.get("summary", ""),
                   extra_head='<link rel="stylesheet" href="../../static/css/highlight.css">')

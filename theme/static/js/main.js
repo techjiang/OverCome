@@ -3,12 +3,23 @@
   'use strict';
 
   /* ---------- 深色模式切换 ---------- */
+  function giscusTheme(dark) {
+    return dark ? 'dark' : 'light';
+  }
+  function syncGiscus(dark) {
+    var frame = document.querySelector('iframe.giscus-frame');
+    if (!frame || !frame.contentWindow) return;
+    frame.contentWindow.postMessage({
+      giscus: { setConfig: { theme: giscusTheme(dark) } }
+    }, 'https://giscus.app');
+  }
   function setupTheme() {
     var btn = document.getElementById('theme-toggle');
     if (!btn) return;
     btn.addEventListener('click', function () {
       var dark = document.documentElement.classList.toggle('dark');
       try { localStorage.setItem('overcome-theme', dark ? 'dark' : 'light'); } catch (e) { /* noop */ }
+      syncGiscus(dark);
     });
   }
 
@@ -178,11 +189,38 @@
     });
   }
 
+  /* ---------- 阅读进度条 + 回到顶部 ---------- */
+  function setupReading() {
+    var bar = document.getElementById('progress-bar');
+    var topBtn = document.getElementById('back-to-top');
+    var ticking = false;
+
+    function update() {
+      var scrollTop = window.scrollY || document.documentElement.scrollTop;
+      var height = document.documentElement.scrollHeight - window.innerHeight;
+      if (bar) bar.style.width = (height > 0 ? (scrollTop / height) * 100 : 0) + '%';
+      if (topBtn) topBtn.classList.toggle('show', scrollTop > 480);
+      ticking = false;
+    }
+    window.addEventListener('scroll', function () {
+      if (!ticking) { ticking = true; window.requestAnimationFrame(update); }
+    }, { passive: true });
+    window.addEventListener('resize', update);
+    update();
+
+    if (topBtn) {
+      topBtn.addEventListener('click', function () {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+    }
+  }
+
   document.addEventListener('DOMContentLoaded', function () {
     setupTheme();
     setupSidebar();
     setupToc();
     setupHighlight();
     setupAnchors();
+    setupReading();
   });
 })();

@@ -21,29 +21,39 @@
     return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
+  /* 分词: 按空白/逗号/顿号/分号拆分, 过滤空词 */
+  function tokenize(q) {
+    return q.toLowerCase().split(/[\s,，、;；]+/).filter(Boolean);
+  }
+
+  function termRe(t) {
+    return t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
   function highlightText(text, terms) {
     var t = escapeHtml(text);
     terms.forEach(function (term) {
       if (!term) return;
-      var re = new RegExp('(' + term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi');
+      var re = new RegExp('(' + termRe(term) + ')', 'gi');
       t = t.replace(re, '<mark>$1</mark>');
     });
     return t;
   }
 
-  function score(item, query, terms) {
+  /* 全部词都必须命中 (AND), 标题/标签/分类/摘要加权计分 */
+  function score(item, terms) {
+    var full = (item.title + ' ' + (item.summary || '') + ' ' + (item.category || '') + ' ' + (item.tags || []).join(' ') + ' ' + (item.content || '')).toLowerCase();
+    var allHit = terms.every(function (t) { return full.indexOf(t) >= 0; });
+    if (!allHit) return 0;
     var s = 0;
     var titleL = item.title.toLowerCase();
-    var full = (item.title + ' ' + (item.summary || '') + ' ' + (item.category || '') + ' ' + (item.tags || []).join(' ') + ' ' + (item.content || '')).toLowerCase();
     terms.forEach(function (term) {
-      if (!term) return;
       if (titleL.indexOf(term) >= 0) s += 10;
       if ((item.tags || []).join(',').toLowerCase().indexOf(term) >= 0) s += 8;
       if ((item.category || '').toLowerCase().indexOf(term) >= 0) s += 6;
       if ((item.summary || '').toLowerCase().indexOf(term) >= 0) s += 3;
-      if (full.indexOf(term) >= 0) s += 1;
+      s += 1;
     });
-    if (query && full.indexOf(query) < 0) s = 0;
     return s;
   }
 
@@ -54,10 +64,10 @@
       hint.textContent = '输入关键词即可全文检索本站内容';
       return;
     }
-    var simple = query.toLowerCase();
+    var terms = tokenize(query);
     fetchIndex().then(function (data) {
       var hits = data
-        .map(function (item) { return { item: item, s: score(item, simple, [simple]) }; })
+        .map(function (item) { return { item: item, s: score(item, terms) }; })
         .filter(function (x) { return x.s > 0; })
         .sort(function (a, b) { return b.s - a.s; })
         .slice(0, 20);
@@ -74,9 +84,9 @@
         if (it.type === 'post') metaBits.push('分类: ' + it.category);
         if (it.tags && it.tags.length) metaBits.push('标签: ' + it.tags.join(', '));
         return '<li>' +
-          '<a class="title" href="' + it.url + '">' + highlightText(it.title, [simple]) + '</a>' +
+          '<a class="title" href="' + it.url + '">' + highlightText(it.title, terms) + '</a>' +
           '<div class="meta">' + metaBits.map(escapeHtml).join(' · ') + '</div>' +
-          (it.summary ? '<p class="snippet">' + highlightText(it.summary.slice(0, 120), [simple]) + '</p>' : '') +
+          (it.summary ? '<p class="snippet">' + highlightText(it.summary.slice(0, 120), terms) + '</p>' : '') +
           '</li>';
       }).join('');
     }).catch(function () {

@@ -22,5 +22,20 @@
   "social": {
     "GitHub": "https://github.com/techjiang",
     "RSS": "feed.xml"
+  },
+  "comments": {
+    "enabled": false,
+    "provider": "giscus",
+    "repo": "techjiang/OverCome",
+    "repoId": "",
+    "category": "Announcements",
+    "categoryId": "",
+    "mapping": "pathname",
+    "lang": "zh-CN"
+  },
+  "analytics": {
+    "enabled": true,
+    "provider": "busuanzi",
+    "script": ""
   }
 }
