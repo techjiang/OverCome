@@ -1,6 +1,8 @@
 /* ============================================================
  * OverCome 站点监测 (纯静态, 零依赖)
  * 1) 页面加载性能: 首字节 / DOM 就绪 / 完全加载
+ *    - 优先 PerformanceNavigationTiming (现代 API, 数值真实)
+ *    - 就绪/加载指标在 DOMContentLoaded / load 事件触发后回填, 不再显示 "--"
  * 2) 目标站点状态: 延迟探测 + 在线/离线判定 (可配置 targets, 可手动重测)
  * 与左侧栏底部的不蒜子统计相互独立, 由 config.monitor 控制开关。
  * ============================================================ */
@@ -24,25 +26,61 @@
     catch (e) { return []; }
   }
 
-  // ---- 1) 页面性能 (Navigation Timing) ----
-  if (window.performance && performance.timing) {
-    var t = performance.timing;
-    var ttfb = t.responseStart - t.navigationStart;
-    var dom = t.domContentLoadedEventEnd - t.navigationStart;
-    var loadT = t.loadEventEnd - t.navigationStart;
-    var row = el('div', 'monitor-row perf');
-    row.appendChild(el('b', '', '页面性能'));
-    row.appendChild(el('span', '', '首字节 ' + fmt(ttfb) + ' · 就绪 ' + fmt(dom) + ' · 加载 ' + fmt(loadT)));
-    box.appendChild(row);
+  /* ---- 1) 页面性能 (Navigation Timing Level 2, 优先; 回退 level 1) ---- */
+  var nav = null;
+  try {
+    var entries = window.performance && performance.getEntriesByType
+      ? performance.getEntriesByType('navigation')
+      : [];
+    nav = entries && entries[0] ? entries[0] : null;
+  } catch (e) { nav = null; }
+
+  var t1 = (window.performance && performance.timing) ? performance.timing : null;
+
+  function navVal(key) {
+    if (nav && isFinite(nav[key]) && nav[key] > 0) return nav[key];
+    if (t1) {
+      var start = t1.navigationStart || 0;
+      if (key === 'responseStart' && t1.responseStart) return t1.responseStart - start;
+      if (key === 'domContentLoadedEventEnd' && t1.domContentLoadedEventEnd) return t1.domContentLoadedEventEnd - start;
+      if (key === 'loadEventEnd' && t1.loadEventEnd) return t1.loadEventEnd - start;
+    }
+    return -1;
   }
 
-  // ---- 2) 目标探测 ----
+  var perfRow = el('div', 'monitor-row perf');
+  perfRow.appendChild(el('b', '', '页面性能'));
+  var perfVal = el('span', '', '');
+  perfRow.appendChild(perfVal);
+  box.appendChild(perfRow);
+
+  function renderPerf(force) {
+    var b = navVal('responseStart');
+    var d = navVal('domContentLoadedEventEnd');
+    var l = navVal('loadEventEnd');
+    var dTxt = d >= 0 ? fmt(d) : '等待就绪…';
+    var lTxt = l >= 0 ? fmt(l) : '加载中…';
+    perfVal.textContent = '首字节 ' + fmt(b) + ' · 就绪 ' + dTxt + ' · 加载 ' + lTxt;
+    if (d >= 0 && l >= 0) {
+      perfVal.setAttribute('data-done', '1');
+    }
+  }
+  renderPerf();
+  /* DOMContentLoaded 与 load 触发后回填真实指标 (解决"就绪/加载 一直 '—'"的问题) */
+  if (document.readyState === 'complete') {
+    renderPerf(true);
+  } else {
+    document.addEventListener('DOMContentLoaded', function () { renderPerf(true); }, { once: true });
+    window.addEventListener('load', function () { renderPerf(true); }, { once: true });
+  }
+
+  /* ---- 2) 目标探测 ---- */
   var targets = parseTargets();
   if (!targets.length) {
     box.appendChild(el('p', 'monitor-note', '未配置监测目标（config.monitor.targets）'));
     return;
   }
-  box.appendChild(el('div', 'monitor-row', ''));
+  box.appendChild(el('div', 'monitor-row'));
   var rowT = box.lastChild;
   rowT.appendChild(el('b', '', '目标状态'));
   var list = el('div', 'monitor-targets');

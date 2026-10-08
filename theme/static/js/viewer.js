@@ -1,7 +1,9 @@
 /* OverCome 媒体查看器 + 链接策略
- * 1) 正文(.post-body)内图片 -> 灯箱(缩放/拖动/方向键切换)
+ * 1) 正文(.post-body)内图片 -> 灯箱(缩放/拖动/方向键切换/单击关闭)
  * 2) 正文内视频/PDF/Office 文档 -> 灯箱在线查看(原生控件提供进度与缩放)
- * 3) 站内链接当前页打开, 站外链接新标签页
+ * 3) 链接跳转策略: config.link_strategy -> meta[name=overcome-links]
+ *    站内 self 当前页 / 站外 blank 新标签 (均可配置, 且正文链接不再被写死 target)
+ * 4) 关闭路径: 右上角 ✕ / Esc / 点击边缘 / 单击灯箱内内容(区分双击缩放与拖动)
  */
 (function () {
   'use strict';
@@ -9,6 +11,18 @@
   var ORIGIN = location.origin;
   var overlay, stage, content, caption, toolbar, closeBtn;
   var state = null; // {kind, list, index, scale, tx, ty, dragging...}
+
+  /* 链接策略: 读取页面 meta, 缺失时默认站内当前页/站外新标签 */
+  var LS = { internal: 'self', external: 'blank' };
+  (function () {
+    var m = document.querySelector('meta[name="overcome-links"]');
+    if (!m) return;
+    try {
+      var o = JSON.parse(m.getAttribute('content') || '{}');
+      if (o.internal === 'blank' || o.internal === 'self') LS.internal = o.internal;
+      if (o.external === 'blank' || o.external === 'self') LS.external = o.external;
+    } catch (e) { /* 保持默认 */ }
+  })();
 
   function isSameOrigin(url) {
     if (!url) return true;
@@ -24,49 +38,31 @@
     return /^(https?:)?\/\//i.test(url) && !isSameOrigin(url);
   }
 
-  /* 文件名提取: 去掉查询/锚点后取末段并解码; 目录结尾回退取上一段 */
-  function fileNameOf(url) {
-    if (!url) return '';
-    var clean = String(url).split('?')[0].split('#')[0];
-    var segs = clean.split(/[\\/]/).filter(Boolean);
-    var name = segs.pop() || '';
-    try {
-      name = decodeURIComponent(name);
-    } catch (e) { /* 保留原样 */ }
-    return name.trim();
-  }
-
-  function escapeHtml(s) {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  }
-
-  /* 底部命名条: 始终显示文件名, 有 alt 且不同时并列展示 */
-  function setCaption(item) {
-    if (!caption) return;
-    var src = (typeof item === 'string') ? item : (item && item.src);
-    var alt = (item && typeof item === 'object' && item.alt) ? String(item.alt).trim() : '';
-    var name = fileNameOf(src);
-    var parts = [];
-    if (name) parts.push('<span class="vf-file">' + escapeHtml(name) + '</span>');
-    if (alt && alt.toLowerCase() !== name.toLowerCase()) {
-      parts.push('<span class="vf-alt">' + escapeHtml(alt) + '</span>');
+  /* 打开链接: 尊重用户操作, 新标签统一加 rel */
+  function openBlank(href) {
+    var w = window.open(href, '_blank');
+    if (w) {
+      try { w.opener = null; } catch (e) { /* noop */ }
     }
-    caption.innerHTML = parts.join('');
   }
 
-  /* ---------- 链接策略: 站外新标签, 站内当前页 ---------- */
+  /* ---------- 链接跳转策略 (全局, 覆盖正文/侧栏/卡片生成的所有链接) ---------- */
   document.addEventListener('click', function (e) {
     var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
     if (!a) return;
     var href = a.getAttribute('href') || '';
-    if (/^(mailto:|tel:|javascript:|#)/i.test(href)) return;
-    if (a.target === '_blank') return; // 已显式指定
+    if (/^(mailto:|tel:|javascript:)/i.test(href)) return;
+    if (a.hasAttribute('target')) return; // 显式指定的 target 尊重 (如友链/社交/嵌入卡片的新窗口)
     if (/^#/.test(href)) return;
-    if (isExternal(href)) {
+    var ext = isExternal(href);
+    if (ext && LS.external === 'blank') {
       e.preventDefault();
-      window.open(href, '_blank', 'noopener');
+      openBlank(href);
+    } else if (!ext && LS.internal === 'blank') {
+      e.preventDefault();
+      openBlank(href);
     }
-    // 站内链接: 不干预, 浏览器默认在当前页跳转
+    // 其余情况: 默认行为 (站内当前页跳转 / 站外 self)
   });
 
   /* ---------- 灯箱 ---------- */
@@ -75,7 +71,7 @@
     overlay = document.createElement('div');
     overlay.className = 'viewer-overlay';
     overlay.innerHTML =
-      '<button class="viewer-btn viewer-close" type="button" aria-label="关闭查看器" title="关闭 (Esc)">✕</button>' +
+      '<button class="viewer-btn viewer-close" type="button" aria-label="关闭查看器" title="关闭 (Esc / 点击内容)">✕</button>' +
       '<div class="viewer-stage">' +
       '  <div class="viewer-content"></div>' +
       '  <div class="viewer-toolbar" hidden>' +
@@ -98,7 +94,10 @@
     caption.className = 'viewer-caption';
     overlay.querySelector('.viewer-stage').appendChild(caption);
     closeBtn = overlay.querySelector('.viewer-close');
-    closeBtn.addEventListener('click', closeViewer);
+    closeBtn.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      closeViewer();
+    });
     toolbar.addEventListener('click', function (ev) {
       var btn = ev.target.closest('[data-act]');
       if (!btn) return;
@@ -144,6 +143,21 @@
     if (zinfo) zinfo.textContent = Math.round(state.scale * 100) + '%';
   }
 
+  /* 单击关闭: 与拖动/双击缩放区分 (moved 阈值 6px, 双击窗口 280ms) */
+  var clickTimer = null;
+
+  function cancelClickClose() {
+    if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+  }
+
+  function scheduleClickClose() {
+    if (clickTimer) { cancelClickClose(); return; } // 第二次点击: 构成双击, 交给 dblclick 缩放
+    clickTimer = setTimeout(function () {
+      clickTimer = null;
+      if (state) closeViewer();
+    }, 280);
+  }
+
   function makeDraggable() {
     var dragging = null;
     document.addEventListener('mousedown', function (ev) {
@@ -152,25 +166,38 @@
       if (!img.matches('img')) return;
       if (state) state.dragging = true;
       img.classList.add('viewer-dragging');
-      dragging = { x: ev.clientX, y: ev.clientY, tx: state ? state.tx : 0, ty: state ? state.ty : 0 };
+      dragging = { x: ev.clientX, y: ev.clientY, tx: state ? state.tx : 0, ty: state ? state.ty : 0, moved: false };
     });
     document.addEventListener('mousemove', function (ev) {
       if (!dragging || !state) return;
+      if (Math.abs(ev.clientX - dragging.x) > 6 || Math.abs(ev.clientY - dragging.y) > 6) dragging.moved = true;
       state.tx = dragging.tx + (ev.clientX - dragging.x);
       state.ty = dragging.ty + (ev.clientY - dragging.y);
       applyImageTransform();
     });
-    document.addEventListener('mouseup', function () {
-      if (dragging) { dragging = null; }
+    document.addEventListener('mouseup', function (ev) {
+      var wasDrag = dragging ? dragging.moved : false;
+      if (dragging) dragging = null;
       if (state) {
         state.dragging = false;
         var img = content.querySelector('img');
         if (img) img.classList.remove('viewer-dragging');
       }
+      /* 单击(未拖动)灯箱内内容 -> 关闭; 图片在 mousedown/mouseup 位移小才算单击。
+         图片单击即关; 视频/文档等带原生控件的媒体, 仅点 content 空白区(边距/标题条)关闭,
+         避免点播放/暂停按钮误关灯箱 */
+      if (state && !wasDrag && ev.target && ev.target.closest && ev.target.closest('.viewer-content')) {
+        if (state.kind === 'image') {
+          scheduleClickClose();
+        } else if (ev.target === content) {
+          scheduleClickClose();
+        }
+      }
     });
     document.addEventListener('dblclick', function (ev) {
       if (!state || state.kind !== 'image') return;
       if (ev.target && ev.target.matches && ev.target.matches('.viewer-content img')) {
+        cancelClickClose();
         setScale(state.scale === 1 ? 2 : 1);
       }
     }, true);
@@ -231,9 +258,39 @@
   function closeViewer() {
     if (!state) return;
     state = null;
+    cancelClickClose();
     if (content) content.innerHTML = '';
     if (caption) caption.textContent = '';
     document.body.classList.remove('viewer-open');
+  }
+
+  /* ---------- 文件名/alt 底部命名条 ---------- */
+  function fileNameOf(url) {
+    if (!url) return '';
+    var clean = String(url).split('?')[0].split('#')[0];
+    var segs = clean.split(/[\\/]/).filter(Boolean);
+    var name = segs.pop() || '';
+    try {
+      name = decodeURIComponent(name);
+    } catch (e) { /* 保留原样 */ }
+    return name.trim();
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function setCaption(item) {
+    if (!caption) return;
+    var src = (typeof item === 'string') ? item : (item && item.src);
+    var alt = (item && typeof item === 'object' && item.alt) ? String(item.alt).trim() : '';
+    var name = fileNameOf(src);
+    var parts = [];
+    if (name) parts.push('<span class="vf-file">' + escapeHtml(name) + '</span>');
+    if (alt && alt.toLowerCase() !== name.toLowerCase()) {
+      parts.push('<span class="vf-alt">' + escapeHtml(alt) + '</span>');
+    }
+    caption.innerHTML = parts.join('');
   }
 
   /* ---------- 唤醒: 点击正文内图片/媒体 ---------- */

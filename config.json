@@ -8,7 +8,7 @@
     "language": "zh-CN",
     "timezone": "Asia/Shanghai",
     "date_format": "%Y-%m-%d",
-    "posts_per_page": 6,
+    "posts_per_page": 10,
     "base": "https://techjiang.github.io/OverCome/",
     "since": 2026
   },
@@ -17,6 +17,16 @@
       "key": "index",
       "label": "首页",
       "url": ""
+    },
+    {
+      "key": "dynamic",
+      "label": "动态",
+      "url": "dynamic/"
+    },
+    {
+      "key": "notes",
+      "label": "笔记",
+      "url": "notes/"
     },
     {
       "key": "archive",
@@ -32,6 +42,11 @@
       "key": "docs",
       "label": "文档",
       "url": "docs/"
+    },
+    {
+      "key": "plugins",
+      "label": "插件",
+      "url": "plugins/"
     },
     {
       "key": "links",
@@ -73,6 +88,15 @@
     "title": "",
     "description": ""
   },
+  "layout": {
+    "card_width": "",
+    "card_cover_height": 150,
+    "content_max_width": 780
+  },
+  "link_strategy": {
+    "internal": "self",
+    "external": "blank"
+  },
   "sidebar_right": {
     "enabled": true,
     "width": 320,
@@ -85,6 +109,7 @@
     "pages": {
       "home": {
         "widgets": [
+          "custom:about",
           "latest",
           "tags",
           "archive",
@@ -102,6 +127,33 @@
       "doc": {
         "widgets": [
           "toc",
+          "latest",
+          "tags"
+        ]
+      },
+      "note": {
+        "widgets": [
+          "toc",
+          "latest",
+          "tags"
+        ]
+      },
+      "notes": {
+        "widgets": [
+          "latest",
+          "tags",
+          "archive"
+        ]
+      },
+      "dynamic": {
+        "widgets": [
+          "latest",
+          "tags",
+          "monitor"
+        ]
+      },
+      "plugins": {
+        "widgets": [
           "latest",
           "tags"
         ]
@@ -147,6 +199,14 @@
       }
     }
   },
+  "custom_widgets": [
+    {
+      "id": "about",
+      "title": "关于本站",
+      "type": "html",
+      "html": "<p>OverCome：无服务器、免费、高级的 GitHub Pages 博客系统。零后端、零数据库，纯静态却能拥有动态的体验。</p>"
+    }
+  ],
   "monitor": {
     "enabled": true,
     "widget": true,
@@ -232,9 +292,40 @@
       ]
     }
   ],
+  "dynamic": {
+    "enabled": true,
+    "title": "动态",
+    "subtitle": "站点新鲜事，像朋友圈一样的时间线",
+    "include_posts": true,
+    "include_friend_rss": true,
+    "notes_sync": true,
+    "items": [
+      {
+        "date": "2026-10-08 22:30",
+        "type": "release",
+        "text": "OverCome v5 上线：动态时间线、笔记、插件生态、置顶强化、链接策略、监测指标等全部就绪。"
+      },
+      {
+        "date": "2026-10-08 21:00",
+        "type": "milestone",
+        "text": "本站访问量突破 1000，感谢每一位访客。"
+      }
+    ]
+  },
+  "notes": {
+    "enabled": true,
+    "title": "笔记",
+    "subtitle": "零散知识与灵感的速记仓库",
+    "per_page": 10
+  },
+  "plugins": {
+    "enabled": true,
+    "path": "plugins"
+  },
   "footer": {
     "powered_by": {
       "enabled": true,
+      "protect": true,
       "techjiang": {
         "name": "科技酱",
         "url": "https://docs.asoe.cn"

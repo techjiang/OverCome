@@ -33,6 +33,9 @@
   align-items: center;
   justify-content: center;
   gap: 10px;
+  padding: 20px;
+  box-sizing: border-box;
+  cursor: default;
 }
 .viewer-content img {
   max-width: 100%;
@@ -47,8 +50,8 @@
 }
 .viewer-content img.viewer-dragging { cursor: grabbing; transition: none; }
 .viewer-content iframe {
-  width: min(1100px, 92vw);
-  height: calc(100vh - 130px);
+  width: min(1100px, 90vw);
+  height: calc(100vh - 190px);
   border: 0;
   border-radius: 8px;
   background: #fff;
@@ -57,7 +60,7 @@
 .viewer-content video {
   width: auto;
   max-width: 100%;
-  max-height: calc(100vh - 130px);
+  max-height: calc(100vh - 190px);
   border-radius: 8px;
   background: #000;
   box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);

@@ -1,0 +1,8 @@
+{
+  "name": "每日一言",
+  "version": "1.0.0",
+  "description": "演示插件：在右侧栏渲染\"每日一言\"卡片，并在文章页底部追加一条随机引用。",
+  "author": "科技酱",
+  "entry": "plugin.py",
+  "registry": true
+}

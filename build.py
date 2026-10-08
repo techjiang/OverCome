@@ -33,12 +33,20 @@ def load_config():
     site.setdefault("base", "")
     site.setdefault("timezone", "Asia/Shanghai")
     site.setdefault("date_format", "%Y-%m-%d")
-    site.setdefault("posts_per_page", 6)
+    site.setdefault("posts_per_page", 10)
     site.setdefault("author", site.get("author", ""))
     site.setdefault("email", "")
     site.setdefault("since", datetime.date.today().year)
     site.setdefault("description", "")
     cfg["site"] = site
+    # 新增配置节默认值 (保持缺失时兼容)
+    cfg.setdefault("layout", {"card_width": "", "card_cover_height": 150, "content_max_width": 780})
+    cfg.setdefault("link_strategy", {"internal": "self", "external": "blank"})
+    cfg.setdefault("dynamic", {"enabled": True, "include_posts": True, "include_friend_rss": True,
+                               "notes_sync": True, "items": []})
+    cfg.setdefault("notes", {"enabled": True, "per_page": 10})
+    cfg.setdefault("plugins", {"enabled": True, "path": "plugins"})
+    cfg.setdefault("custom_widgets", [])
     return cfg
 
 
@@ -144,7 +152,9 @@ class Markdown:
                 return before[:-1] + f'<img src="{esc(url)}" alt="{esc(alt)}" loading="lazy" decoding="async">' + (f'<span class="img-cap">{esc(title)}</span>' if title else "")
             cap = self.inline(alt)
             t = f' title="{esc(title)}"' if title else ""
-            return f'<a href="{esc(url)}" target="_blank" rel="noopener nofollow"{t}>{cap}</a>' + after
+            # 链接跳转策略在运行期由 viewer.js 统一处理 (config.link_strategy),
+            # 构建期不再写死 target 与 rel, 避免策略失效。
+            return f'<a href="{esc(url)}"{t}>{cap}</a>' + after
 
         text = re.sub(
             r"(!?)\[([^\]]+)\]\(([^)\s]+)(?:\s+[\"']([^\"']+)[\"'])?\)(.*)",
@@ -172,7 +182,7 @@ class Markdown:
             line = lines[i]
             stripped = line.strip()
 
-            # 代码块
+            # 代码块 (复制按钮内置于 <pre> 左上角, 与 .code-copy 定位配合)
             m = re.match(r"```(\w*)", stripped)
             if m:
                 lang = m.group(1)
@@ -183,11 +193,25 @@ class Markdown:
                     i += 1
                 i += 1
                 code = "\n".join(buf)
+                btn = '<button class="code-copy" type="button" title="复制代码">复制</button>'
                 if lang:
-                    self._out.append(f'<pre class="code-block"><code class="lang-{esc(lang)}">{esc(code)}</code></pre>')
+                    self._out.append(f'<pre class="code-block"><code class="lang-{esc(lang)}">{esc(code)}</code>{btn}</pre>')
                 else:
-                    self._out.append(f'<pre class="code-block"><code>{esc(code)}</code></pre>')
-                self._out.append('<button class="code-copy" type="button" title="复制代码">复制</button>')
+                    self._out.append(f'<pre class="code-block"><code>{esc(code)}</code>{btn}</pre>')
+                continue
+
+            # 链接卡片: 独立成行 @[标题](https://…)
+            m = re.match(r"^@\[([^\]]+)\]\(([^)\s]+)\)\s*$", stripped)
+            if m:
+                self._out.append(self.link_card(m.group(1), m.group(2)))
+                i += 1
+                continue
+
+            # 网页嵌入卡片: 独立成行 :::embed <url> [标题]
+            m = re.match(r"^:::\s*embed\s+(\S+?)(?:\s+(.+?))?\s*$", stripped, re.I)
+            if m:
+                self._out.append(self.embed_card(m.group(2) or "", m.group(1)))
+                i += 1
                 continue
 
             # 标题
@@ -275,6 +299,35 @@ class Markdown:
             self._out.append(f"<p>{self.inline(para)}</p>")
 
         return "".join(self._out)
+
+    def link_card(self, title, url):
+        """链接卡片: @[标题](https://…), 独立成行时渲染为卡片。
+        图标在运行期由 viewer.js 填充 favicon, 失败自动隐藏。"""
+        url = url.strip()
+        m = re.match(r"^https?://([^/]+)", url)
+        domain = m.group(1) if m else url
+        icon = (f'<img class="lc-icon" src="https://icons.duckduckgo.com/ip3/{esc(domain)}.ico" alt="" '
+                f'loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.remove()">'
+                if m else '<span class="lc-icon lc-icon-ph" aria-hidden="true">↗</span>')
+        t = esc(title) or esc(domain)
+        return (f'<a class="link-card" href="{esc(url)}" target="_blank" rel="noopener nofollow">'
+                f'{icon}<span class="lc-body"><b class="lc-title">{t}</b>'
+                f'<span class="lc-domain">{esc(domain)}</span></span>'
+                f'<span class="lc-arrow" aria-hidden="true">↗</span></a>')
+
+    def embed_card(self, title, url):
+        """网页嵌入卡片: :::embed <url> [标题], 独立成行时渲染为可滚动的 iframe 卡片。
+        不支持被嵌入的目标站点由 iframe 自身的 X-Frame-Options 决定, 提供"新窗口打开"兜底。"""
+        url = url.strip()
+        m = re.match(r"^https?://([^/]+)", url)
+        domain = m.group(1) if m else url
+        t = esc(title) or esc(domain)
+        return (f'<div class="embed-card"><div class="embed-bar">'
+                f'<span class="embed-title" title="{esc(url)}">{t}</span>'
+                f'<a class="embed-open" href="{esc(url)}" target="_blank" rel="noopener nofollow">新窗口打开 ↗</a>'
+                f'</div><div class="embed-frame">'
+                f'<iframe src="{esc(url)}" loading="lazy" referrerpolicy="no-referrer-when-downgrade" '
+                f'title="{t}"></iframe></div></div>')
 
     def render(self, text):
         self.__init__()
@@ -394,6 +447,47 @@ def load_docs():
     return docs
 
 
+def load_notes():
+    """笔记: content/notes/*.md, 零散知识与灵感速记, 生成 /notes/ 目录页与 /notes/<slug>/ 详情页"""
+    nc = CONFIG.get("notes") or {}
+    if not nc.get("enabled"):
+        return []
+    notes = []
+    for fp in sorted((CONTENT / "notes").glob("*.md")):
+        raw = fp.read_text(encoding="utf-8")
+        meta, body = parse_front_matter(raw)
+        if str(meta.get("draft", "")).lower() in ("true", "1", "yes"):
+            continue
+        date = parse_date(meta.get("date")) or datetime.date.fromtimestamp(fp.stat().st_mtime)
+        slug = meta.get("slug") or fp.stem
+        title = meta.get("title") or slug
+        summary = meta.get("summary") or ""
+        tags = meta.get("tags") or []
+        if isinstance(tags, str):
+            tags = [t.strip() for t in tags.replace("，", ",").split(",") if t.strip()]
+        tmp = Markdown()
+        content_html = tmp.render(body)
+        notes.append({
+            "slug": slug,
+            "title": title,
+            "date": date,
+            "date_str": date_fmt(date),
+            "tags": tags,
+            "summary": summary,
+            "url": f"notes/{slug}/",
+            "content_html": content_html,
+            "content_text": re.sub(r"<[^>]+>", "", content_html),
+            "headings": tmp.headings,
+        })
+    notes.sort(key=lambda d: d["date"], reverse=True)
+    return notes
+
+
+def pin_badge():
+    """置顶徽标 (复用), 保证全部列表里置顶可见而非摆设"""
+    return '<span class="pin-badge" title="置顶文章">置顶</span>'
+
+
 def compute_indexes(posts):
     categories = {}
     tags = {}
@@ -495,6 +589,29 @@ def seo_meta(title, description, page_url="", page_type="website", date_iso="", 
 
 def sidebar_cfg():
     return CONFIG.get("sidebar_right") or {}
+
+
+def layout_css_vars():
+    """文章卡片 / 正文内容尺寸: config.layout 注入 :root CSS 变量。
+    由 Renderer.page 放入 extra_head, 位于 stylesheet link 之后, 覆盖 :root 默认值。"""
+    ly = CONFIG.get("layout") or {}
+    parts = ["--card-cover-h:%dpx" % max(60, int(ly.get("card_cover_height") or 150))]
+    cw = (ly.get("card_width") or "").strip()
+    if re.fullmatch(r"\d+(px|rem|em|%|vw)", cw):
+        parts.append("--card-max-w:%s" % cw)
+    cmw = max(420, int(ly.get("content_max_width") or 780))
+    parts.append("--content-max-w:%dpx" % cmw)
+    return "<style>:root{%s}</style>" % ";".join(parts)
+
+
+def link_strategy_meta():
+    """链接跳转策略: config.link_strategy -> meta, 运行期 viewer.js 读取执行。
+    internal: self(站内当前页) / blank; external: blank / self。"""
+    ls = CONFIG.get("link_strategy") or {}
+    internal = "blank" if str(ls.get("internal", "")).lower() == "blank" else "self"
+    external = "self" if str(ls.get("external", "")).lower() == "self" else "blank"
+    data = json.dumps({"internal": internal, "external": external}, separators=(",", ":"))
+    return f'<meta name="overcome-links" content=\'{data}\'>'
 
 
 def right_bar_width():
@@ -608,17 +725,103 @@ def render_circle_block(circle):
             '<div class="circle-grid">' + "".join(blocks) + "</div></section>")
 
 
-def powered_by_html():
-    """文章底部署名: Powered by <a>科技酱</a> & <a>OverCome</a>, 链接可配置"""
+# 署名标准值: Powered by 科技酱 & OverCome (不可移除/修改/篡改/遮掩)
+# 任何对 config.footer.powered_by 的改动都会让构建直接失败, 站点无法上线。
+SIGN_STANDARD = {
+    "tj_name": "科技酱", "tj_url": "https://docs.asoe.cn",
+    "oc_name": "OverCome", "oc_url": "https://github.com/techjiang/OverCome",
+}
+
+
+def assert_standard_sign():
+    """署名锁定为标准值: 修改 config 即构建崩溃 (不可修改/篡改防线之二)"""
     pb = (CONFIG.get("footer") or {}).get("powered_by") or {}
-    if not pb.get("enabled"):
-        return ""
     tj, oc = pb.get("techjiang") or {}, pb.get("overcome") or {}
-    tj_name, oc_name = esc(tj.get("name", "科技酱")), esc(oc.get("name", "OverCome"))
-    tj_url, oc_url = esc(tj.get("url", "")), esc(oc.get("url", ""))
-    tj_html = f'<a href="{tj_url}" target="_blank" rel="noopener">{tj_name}</a>' if tj_url else tj_name
-    oc_html = f'<a href="{oc_url}" target="_blank" rel="noopener">{oc_name}</a>' if oc_url else oc_name
-    return f'<p class="powered-by">Powered by {tj_html} & {oc_html}</p>'
+    got = [str(tj.get("name", "")), str(tj.get("url", "")),
+           str(oc.get("name", "")), str(oc.get("url", ""))]
+    want = [SIGN_STANDARD["tj_name"], SIGN_STANDARD["tj_url"],
+            SIGN_STANDARD["oc_name"], SIGN_STANDARD["oc_url"]]
+    if got != want:
+        raise SystemExit("[FATAL] 署名配置被修改: Powered by 科技酱 & OverCome 不可修改/篡改, 站点拒绝构建.")
+
+
+def powered_by_spec():
+    """署名规格: [名称1, 链接1, 名称2, 链接2] — 固定标准值, 与页面 DOM/校验脚本一致"""
+    return [SIGN_STANDARD["tj_name"], SIGN_STANDARD["tj_url"],
+            SIGN_STANDARD["oc_name"], SIGN_STANDARD["oc_url"]]
+
+
+def seal_token():
+    """署名完整性令牌: 由站点身份与署名规格派生 (构建期固定)。
+    前端 seal.js 校验 meta 与 .powered-by 一致性; 构建期也用它反校验产物。"""
+    import hashlib
+    spec = powered_by_spec()
+    raw = "|".join([SITE.get("base", ""), SITE.get("title", "")] + list(spec))
+    return hashlib.sha256(("overcome-seal-v5:" + raw).encode("utf-8")).hexdigest()[:24]
+
+
+def seal_meta():
+    """署名校验 meta: 规格 + 令牌, 注入每个页面 head。"""
+    spec = powered_by_spec()
+    spec_txt = "|".join(spec)
+    return (f'<meta name="overcome-seal-spec" content="{esc(spec_txt)}">\n'
+            f'<meta name="overcome-seal" content="{seal_token()}">')
+
+
+def powered_by_html():
+    """文章底部署名: Powered by <a>科技酱</a> & <a>OverCome</a>。
+    署名不可移除、修改、篡改、遮掩:
+      1) 构建期: verify_build_integrity() 校验产物, 缺少即构建失败 (网站无法上线);
+      2) 运行期: seal.js 校验 DOM/链接/可见性, 不通过即展示崩溃页。
+    因此即使配置 enabled=false 也会强制渲染。"""
+    tj_name, tj_url, oc_name, oc_url = powered_by_spec()
+    tj_name_e, oc_name_e = esc(tj_name), esc(oc_name)
+    tj_url_e, oc_url_e = esc(tj_url), esc(oc_url)
+    tj_html = f'<a href="{tj_url_e}" data-overcome-link="1">{tj_name_e}</a>' if tj_url_e else tj_name_e
+    oc_html = f'<a href="{oc_url_e}" data-overcome-link="1">{oc_name_e}</a>' if oc_url_e else oc_name_e
+    return (f'<p class="powered-by" data-overcome-sign="1">Powered by {tj_html} & {oc_html}</p>')
+
+
+def verify_build_integrity():
+    """构建期署名完整性校验 (防移除防线):
+    扫描全部 dist 产物 HTML, 任一页面缺少署名/校验 meta/不匹配即构建崩溃。
+    从 build.py 删除署名生成逻辑 = 构建必然失败 = 站点无法部署使用。"""
+    spec = powered_by_spec()
+    tok = seal_token()
+    dist_html = [fp for fp in DIST.rglob("*.html")
+                 if "go/" not in str(fp.relative_to(DIST)) and fp.name not in ("404.html",)]
+    if not dist_html:
+        return
+    bad = []
+    for fp in dist_html:
+        txt = fp.read_text(encoding="utf-8")
+        if 'data-overcome-sign="1"' not in txt or "Powered by" not in txt:
+            bad.append((fp.name, "缺少署名节点"))
+            continue
+        if f'name="overcome-seal" content="{tok}"' not in txt:
+            bad.append((fp.name, "署名校验令牌缺失或不匹配"))
+            continue
+        if f'name="overcome-seal-spec" content="{esc("|".join(spec))}"' not in txt:
+            bad.append((fp.name, "署名规格缺失或不匹配"))
+            continue
+        link1, link2 = spec[1], spec[3]
+        if link1 and f'href="{esc(link1)}"' not in txt:
+            bad.append((fp.name, "署名链接被修改"))
+        if link2 and f'href="{esc(link2)}"' not in txt:
+            bad.append((fp.name, "署名链接被修改"))
+    if bad:
+        detail = "; ".join(f"{n} -> {r}" for n, r in bad[:6])
+        raise SystemExit(f"[FATAL] 署名完整性校验失败: {detail} (署名不可移除/修改/篡改, 站点拒绝构建)")
+    # 校验运行期防线脚本未被改动 (seal.js 内置标准署名 EXPEC, 改动即构建失败)
+    seal_fp = DIST / "static" / "js" / "seal.js"
+    if seal_fp.exists():
+        seal_txt = seal_fp.read_text(encoding="utf-8")
+        expect_marker = "科技酱|https://docs.asoe.cn|OverCome|https://github.com/techjiang/OverCome"
+        if expect_marker not in seal_txt:
+            raise SystemExit("[FATAL] 运行期署名防线 seal.js 缺失/被改动, 站点拒绝构建.")
+    else:
+        raise SystemExit("[FATAL] 运行期署名防线 seal.js 缺失, 站点拒绝构建.")
+    print(f"[OK] 署名完整性校验通过: 共 {len(dist_html)} 个页面均含受保护署名")
 
 
 # ------------------------------------------------- 友链朋友圈 (RSS 聚合) ----
@@ -740,7 +943,9 @@ class Renderer:
         _simg = seo.get("image", "")
         seo_head = seo_meta(title, description or SITE.get("description", ""),
                             _surl, _stype, _sdate, _simg)
-        return self.base.replace("{{title}}", esc(title)) \
+        # 全局注入: 布局尺寸变量 + 链接跳转策略 + 署名完整性校验 (不可移除/篡改)
+        extra_head = layout_css_vars() + link_strategy_meta() + seal_meta() + extra_head
+        html = self.base.replace("{{title}}", esc(title)) \
             .replace("{{site_title}}", esc(SITE["title"])) \
             .replace("{{subtitle}}", esc(SITE.get("subtitle", ""))) \
             .replace("{{description}}", esc(description or SITE.get("description", ""))) \
@@ -756,7 +961,16 @@ class Renderer:
             .replace("{{seo_head}}", seo_head) \
             .replace("{{analytics}}", analytics_html()) \
             .replace("{{assets_version}}", assets_version()) \
-            .replace("{{content}}", body)
+            .replace("{{content}}", body + powered_by_html())
+        # 插件后处理钩子: 逐页 process(html, context), 插件异常不阻塞主站构建
+        for pl in load_plugins():
+            mod = pl.get("module")
+            if mod and callable(getattr(mod, "process", None)):
+                try:
+                    html = mod.process(html, {"page_type": page_type, "root": root, "title": title})
+                except Exception:
+                    pass
+        return html
 
     def right_bar_html(self, root, page_type="home", toc="", rel=None):
         """右侧栏组件, widgets 顺序与内容由 config.sidebar_right.pages 定义
@@ -770,9 +984,10 @@ class Renderer:
         for w in ws:
             if w == "latest":
                 n = int(sidebar_cfg().get("latest_count", 5))
-                lst = [p for p in _ALL_POSTS if not p.get("pinned")][:n] or _ALL_POSTS[:n]
+                # 置顶文章也进"最新文章"并带徽标, 让置顶不是摆设
+                lst = _ALL_POSTS[:n]
                 items = "".join(
-                    f'<li><a href="{root}{p["url"]}">{esc(p["title"])}</a><span class="w-date">{p["date_str"]}</span></li>'
+                    f'<li>{pin_badge() if p.get("pinned") else ""}<a href="{root}{p["url"]}">{esc(p["title"])}</a><span class="w-date">{p["date_str"]}</span></li>'
                     for p in lst)
                 if lst:
                     widgets.append(f'<div class="widget"><h3>最新文章</h3><ul class="widget-list">{items}</ul></div>')
@@ -801,9 +1016,122 @@ class Renderer:
                     for p in rel)
                 if items:
                     widgets.append(f'<div class="widget"><h3>相关阅读</h3><ul class="widget-list">{items}</ul></div>')
+            elif w.startswith("custom:"):
+                cid = w.split(":", 1)[1]
+                w_html = custom_widget_html(root, cid)
+                if w_html:
+                    widgets.append(w_html)
+            elif w.startswith("plugin:"):
+                cid = w.split(":", 1)[1]
+                w_html = custom_widget_html(root, "plugin:" + cid)
+                if w_html:
+                    widgets.append(w_html)
         if not widgets:
             return ""
         return '<aside class="right-bar" aria-label="侧边栏">' + "".join(widgets) + "</aside>"
+
+
+# ------------------------------------------------------------ 插件生态 ----
+
+_PLUGIN_CACHE = None
+
+
+def load_plugins():
+    """插件生态: 扫描 plugins/<name>/plugin.json (+ 可选 Python 入口) 并加载。
+    每条插件元数据: {name, version, description, author, entry(hooks 所在模块文件), registry(注册表页展示)}
+    Python 入口约定钩子 (可选实现):
+      process(html, context) -> html   逐页后处理, context={page_type, root, title}
+      widget(context) -> str           右侧栏自定义组件 HTML, context={root, page_type}
+      register_pages() -> [(path, html)]  构建期注册额外静态页面
+    插件在构建机器本地执行, 仅安装/信任你自己编写的插件。"""
+    global _PLUGIN_CACHE
+    if _PLUGIN_CACHE is not None:
+        return _PLUGIN_CACHE
+    _PLUGIN_CACHE = []
+    pc = CONFIG.get("plugins") or {}
+    if not pc.get("enabled"):
+        return _PLUGIN_CACHE
+    pdir = ROOT / (pc.get("path") or "plugins")
+    if not pdir.is_dir():
+        return _PLUGIN_CACHE
+    for d in sorted(pdir.iterdir()):
+        if not d.is_dir():
+            continue
+        jp = d / "plugin.json"
+        if not jp.exists():
+            continue
+        try:
+            meta = json.loads(jp.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        meta.setdefault("name", d.name)
+        meta.setdefault("version", "0.1.0")
+        meta.setdefault("description", "")
+        meta.setdefault("author", SITE.get("author", ""))
+        mod = None
+        py = d / (meta.get("entry") or "plugin.py")
+        if py.exists():
+            try:
+                import importlib.util
+                spec = importlib.util.spec_from_file_location(
+                    "overcome_plugin_" + re.sub(r"\W", "_", d.name), py)
+                if spec is not None and spec.loader is not None:
+                    mod = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(mod)
+            except Exception:
+                mod = None
+        _PLUGIN_CACHE.append({"dir": d.name, "meta": meta, "module": mod})
+    return _PLUGIN_CACHE
+
+
+def plugin_pages():
+    """调用各插件的 register_pages() 钩子, 返回 [(path, html)] 供 build() 写入"""
+    out = []
+    for pl in load_plugins():
+        mod = pl.get("module")
+        if not mod or not callable(getattr(mod, "register_pages", None)):
+            continue
+        try:
+            pages = mod.register_pages() or []
+            out.extend((str(p), str(h)) for p, h in pages if p and h)
+        except Exception:
+            pass
+    return out
+
+
+def custom_widget_html(root, cid):
+    """自定义侧栏组件: config.custom_widgets 中 id 匹配的组件。
+    type=html 直接内联; text 文本; list 列表; plugin 交给同名插件的 widget 钩子。"""
+    if cid.startswith("plugin:"):
+        pname = cid.split(":", 1)[1]
+        for pl in load_plugins():
+            if pl["dir"] != pname:
+                continue
+            mod = pl.get("module")
+            if mod and callable(getattr(mod, "widget", None)):
+                try:
+                    w = mod.widget({"root": root, "page_type": "custom"})
+                    if w:
+                        return f'<div class="widget widget-plugin widget-{esc(pname)}">{w}</div>'
+                except Exception:
+                    pass
+            return ""
+        return ""
+    for w in CONFIG.get("custom_widgets") or []:
+        if w.get("id") != cid:
+            continue
+        title = esc(w.get("title") or "组件")
+        wtype = w.get("type") or "html"
+        if wtype == "text":
+            inner = f'<p class="custom-widget-text">{esc(w.get("text", ""))}</p>'
+        elif wtype == "list":
+            items = "".join(f'<li><a href="{esc(it.get("url", "#"))}">{esc(it.get("label", ""))}</a></li>'
+                            for it in w.get("items") or [])
+            inner = f'<ul class="widget-list">{items}</ul>'
+        else:
+            inner = w.get("html") or ""
+        return f'<div class="widget widget-custom widget-{esc(cid)}"><h3>{title}</h3>{inner}</div>'
+    return ""
 
 
 def analytics_html():
@@ -858,7 +1186,7 @@ def comments_html():
 </section>'''
 
 
-def render_index(posts, page_no=1, per_page=6):
+def render_index(posts, page_no=1, per_page=10):
     r = Renderer()
     total = len(posts)
     pages = max(1, (total + per_page - 1) // per_page)
@@ -869,7 +1197,7 @@ def render_index(posts, page_no=1, per_page=6):
     root = "" if page_no == 1 else "../../"
     cards = []
     for p in chunk:
-        pin_badge = '<span class="pin-badge" title="置顶文章">置顶</span>' if p.get("pinned") else ""
+        badge = pin_badge()
         tags_html = "".join(
             f'<a class="chip chip-tag" href="{root}tags/{slugify(t)}/">{esc(t)}</a>'
             for t in p["tags"][:4])
@@ -878,8 +1206,9 @@ def render_index(posts, page_no=1, per_page=6):
             cover_html = f'<div class="card-cover"><img src="{esc(p["cover"])}" alt="" loading="lazy" decoding="async"></div>'
         else:
             cover_html = '<div class="card-cover card-cover-placeholder"><span></span></div>'
+        pin_class = " card-has-pin" if p.get("pinned") else ""
         cards.append(f'''
-<article class="card">
+<article class="card{pin_class}">
   {cover_html}
   <div class="card-body">
     <div class="card-meta">
@@ -887,7 +1216,7 @@ def render_index(posts, page_no=1, per_page=6):
       <a class="chip chip-cat" href="{root}categories/{slugify(p["category"])}/">{esc(p["category"])}</a>
       <span class="read-min">{p["reading_min"]} 分钟阅读 · {p["word_count"]} 字</span>
     </div>
-    <h2 class="card-title">{pin_badge}<a href="{root}{p["url"]}">{esc(p["title"])}</a></h2>
+    <h2 class="card-title">{badge}<a href="{root}{p["url"]}">{esc(p["title"])}</a></h2>
     <p class="card-summary">{esc(p["summary"] or p["content_text"][:120])}</p>
     <div class="card-tags">{tags_html}</div>
   </div>
@@ -899,6 +1228,16 @@ def render_index(posts, page_no=1, per_page=6):
         if page_no > 1:
             prev_url = root + ("index.html" if page_no == 2 else f"page/{page_no - 1}/")
             items.append(f'<a class="pager prev" href="{prev_url}">‹ 上一页</a>')
+        # 页码导航 (每页 posts_per_page 篇, 页码可直跳)
+        page_btns = []
+        for pn in range(1, pages + 1):
+            if pn == page_no:
+                page_btns.append(f'<span class="page-num cur" aria-current="page">{pn}</span>')
+            elif pn == 1:
+                page_btns.append(f'<a class="page-num" href="{root}index.html">{pn}</a>')
+            else:
+                page_btns.append(f'<a class="page-num" href="{root}page/{pn}/">{pn}</a>')
+        items.append('<span class="page-nums">' + "".join(page_btns) + "</span>")
         items.append(f'<span class="pager-info">{page_no} / {pages} · 共 {total} 篇</span>')
         if page_no < pages:
             items.append(f'<a class="pager next" href="{root}page/{page_no + 1}/">下一页 ›</a>')
@@ -971,8 +1310,6 @@ def render_post(post, posts):
             for p in rel)
         rel_html = f'<section class="related"><h3>相关阅读</h3><ul>{items}</ul></section>'
 
-    powered_html = powered_by_html()
-
     article = f'''
 <article class="post">
   <header class="post-header">
@@ -991,7 +1328,6 @@ def render_post(post, posts):
     <nav class="post-nav">{prev_html}{next_html}</nav>
   </footer>
   {rel_html}
-  {powered_html}
  </article>''' + comments_html()
     return r.page(post["title"], article, root=root, active="",
                   description=post.get("summary", ""), toc=toc, page_type="post", rel=rel,
@@ -1015,7 +1351,7 @@ def render_archive(posts):
     html_parts = []
     for key in sorted(archive.keys(), reverse=True):
         items = "".join(
-            f'<li><span class="date">{p["date_str"]}</span><a href="../posts/{p["slug"]}/">{esc(p["title"])}</a><span class="cat">{esc(p["category"])}</span></li>'
+            f'<li><span class="date">{p["date_str"]}</span>{pin_badge() if p.get("pinned") else ""}<a href="../posts/{p["slug"]}/">{esc(p["title"])}</a><span class="cat">{esc(p["category"])}</span></li>'
             for p in archive[key])
         html_parts.append(f'<section class="archive-group"><h2>{esc(key)} <em>{len(archive[key])}</em></h2><ul>{items}</ul></section>')
     body = f'<div class="page post"><header class="post-header"><h1 class="page-title">归档</h1><p class="page-sub">共 {len(posts)} 篇文章</p></header><div class="archive">{"".join(html_parts)}</div></div>'
@@ -1037,7 +1373,7 @@ def render_tag(tag, posts):
     r = Renderer()
     root = "../../"
     items = "".join(
-        f'<li><span class="date">{p["date_str"]}</span><a href="{root}posts/{p["slug"]}/">{esc(p["title"])}</a></li>'
+        f'<li><span class="date">{p["date_str"]}</span>{pin_badge() if p.get("pinned") else ""}<a href="{root}posts/{p["slug"]}/">{esc(p["title"])}</a></li>'
         for p in posts)
     body = f'<div class="page post"><header class="post-header"><h1 class="page-title">#{esc(tag)}</h1><p class="page-sub">{len(posts)} 篇文章</p></header><ul class="flat-list">{items}</ul></div>'
     return r.page(f"标签: {tag}", body, root=root, active="tags", page_type="tags", seo={"url": f"tags/{slugify(tag)}/"})
@@ -1047,7 +1383,7 @@ def render_category(cat, posts):
     r = Renderer()
     root = "../../"
     items = "".join(
-        f'<li><span class="date">{p["date_str"]}</span><a href="{root}posts/{p["slug"]}/">{esc(p["title"])}</a></li>'
+        f'<li><span class="date">{p["date_str"]}</span>{pin_badge() if p.get("pinned") else ""}<a href="{root}posts/{p["slug"]}/">{esc(p["title"])}</a></li>'
         for p in posts)
     body = f'<div class="page post"><header class="post-header"><h1 class="page-title">{esc(cat)}</h1><p class="page-sub">{len(posts)} 篇文章</p></header><ul class="flat-list">{items}</ul></div>'
     return r.page(f"分类: {cat}", body, root=root, active="", page_type="category", seo={"url": f"categories/{slugify(cat)}/"})
@@ -1120,6 +1456,212 @@ def render_doc(doc, docs):
                   description=doc.get("summary", ""), toc=toc, page_type="doc",
                   seo={"url": "docs/%s/" % doc["slug"], "type": "article",
                        "date": doc["date"].isoformat() if doc.get("date") else ""})
+
+
+# ------------------------------------------------------------ 笔记 ----
+
+def render_notes_index(notes):
+    """笔记目录页 /notes/: 列表展示 + 每页 per_page 条分页"""
+    r = Renderer()
+    nc = CONFIG.get("notes") or {}
+    per = max(1, int(nc.get("per_page", 10)))
+    total = len(notes)
+    pages = max(1, (total + per - 1) // per)
+    page_no = 1
+    chunk = notes[:per]
+    items = "".join(
+        f'<li><span class="date">{n["date_str"]}</span><a href="../{n["url"]}">{esc(n["title"])}</a><span class="cat">{esc(n.get("summary") or "笔记")}</span></li>'
+        for n in chunk) or '<li class="empty">暂无笔记，将零散知识写进 content/notes/ 即可展示。</li>'
+    pagination = ""
+    if pages > 1:
+        pagination = (f'<nav class="pagination"><span class="pager-info">{page_no} / {pages} · 共 {total} 篇笔记</span>'
+                      f'<a class="pager next" href="../notes/">下一页 ›</a></nav>')
+    body = (f'<div class="page post"><header class="post-header"><h1 class="page-title">笔记'
+            f'</h1><p class="page-sub">{nc.get("subtitle", "零散知识与灵感的速记仓库")} · 共 {total} 篇</p></header>'
+            f'<ul class="flat-list">{items}</ul>{pagination}</div>')
+    return r.page("笔记", body, root="../", active="notes", page_type="notes", seo={"url": "notes/"})
+
+
+def render_note(note, notes):
+    """笔记详情页 /notes/<slug>/: 含目录、前后篇、侧栏"""
+    r = Renderer()
+    root = "../../"
+    toc = toc_html(note["headings"], "笔记目录")
+    prev = next_n = None
+    for idx, n in enumerate(notes):
+        if n["slug"] == note["slug"]:
+            prev = notes[idx + 1] if idx + 1 < len(notes) else None
+            next_n = notes[idx - 1] if idx > 0 else None
+            break
+    prev_html = f'<a class="nav-item prev" href="{root}{prev["url"]}"><span>← 上一篇</span><b>{esc(prev["title"])}</b></a>' if prev else "<span></span>"
+    next_html = f'<a class="nav-item next" href="{root}{next_n["url"]}"><span>下一篇 →</span><b>{esc(next_n["title"])}</b></a>' if next_n else "<span></span>"
+    tags_html = "".join(
+        f'<a class="chip chip-tag" href="{root}tags/{slugify(t)}/">{esc(t)}</a>'
+        for t in note["tags"])
+    article = f'''
+<article class="post">
+  <header class="post-header">
+    <div class="post-meta">
+      <span class="date">{note["date_str"]}</span>
+      <a class="crumb" href="../../notes/">← 返回笔记</a>
+    </div>
+    <h1 class="post-title">{esc(note["title"])}</h1>
+    <div class="post-tags">{tags_html}</div>
+  </header>
+  <div class="post-layout">
+    <div class="post-body">{note["content_html"]}</div>
+  </div>
+  <footer class="post-footer"><nav class="post-nav">{prev_html}{next_html}</nav></footer>
+</article>'''
+    return r.page(note["title"], article, root=root, active="notes",
+                  description=note.get("summary", ""), toc=toc, page_type="note",
+                  seo={"url": "notes/%s/" % note["slug"], "type": "article",
+                       "date": note["date"].isoformat()})
+
+
+# ------------------------------------------------------------ 动态 ----
+
+def parse_dt(s, date_only=False):
+    """解析动态时间: 'YYYY-MM-DD' 或 'YYYY-MM-DD HH:MM', 失败返回 None"""
+    if not s:
+        return None
+    s = str(s).strip()
+    m = re.match(r"^(\d{4})-(\d{1,2})-(\d{1,2})(?:\s+(\d{1,2}):(\d{2}))?", s)
+    if not m:
+        return None
+    try:
+        d = datetime.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        if date_only:
+            return d
+        hh, mm = int(m.group(4) or 0), int(m.group(5) or 0)
+        return datetime.datetime(d.year, d.month, d.day, hh, mm)
+    except ValueError:
+        return None
+
+
+def dynamic_entries(posts, notes):
+    """动态时间线数据: config.dynamic.items + 自动并入最新文章/笔记发布。
+    像朋友圈一样: 做了一件什么事 -> 以事件卡片呈现, 按时间倒序。"""
+    dc = CONFIG.get("dynamic") or {}
+    if not dc.get("enabled"):
+        return []
+    entries = []
+    for it in dc.get("items") or []:
+        dt = parse_dt(it.get("date"))
+        if dt is None:
+            continue
+        entries.append({
+            "ts": dt,
+            "type": str(it.get("type") or "update"),
+            "text": str(it.get("text") or ""),
+            "link": it.get("link") or "",
+            "title": it.get("title") or "",
+            "source": "config",
+        })
+    if dc.get("include_posts"):
+        for p in posts[:8]:
+            if not p.get("date"):
+                continue
+            entries.append({
+                "ts": datetime.datetime(p["date"].year, p["date"].month, p["date"].day, 12, 0),
+                "type": "post",
+                "text": f'发布了新文章《{p["title"]}》',
+                "link": p["url"],
+                "title": p["title"],
+                "source": "post",
+            })
+    if dc.get("notes_sync"):
+        for n in notes[:5]:
+            if not n.get("date"):
+                continue
+            entries.append({
+                "ts": datetime.datetime(n["date"].year, n["date"].month, n["date"].day, 12, 0),
+                "type": "note",
+                "text": f'新笔记：《{n["title"]}》',
+                "link": n["url"],
+                "title": n["title"],
+                "source": "note",
+            })
+    entries.sort(key=lambda e: e["ts"], reverse=True)
+    return entries
+
+
+_TYPE_LABEL = {
+    "release": ("版本更新", "release"),
+    "milestone": ("里程碑", "milestone"),
+    "update": ("动态", "update"),
+    "post": ("发布文章", "post"),
+    "note": ("新笔记", "note"),
+}
+
+
+def render_dynamic(posts, notes):
+    """动态页 /dynamic/: 朋友圈式时间线"""
+    r = Renderer()
+    dc = CONFIG.get("dynamic") or {}
+    entries = dynamic_entries(posts, notes)
+    if not entries:
+        body = '<div class="page post"><header class="post-header"><h1 class="page-title">动态</h1></header><p class="empty">暂无动态。</p></div>'
+        return r.page("动态", body, root="../", active="dynamic", page_type="dynamic", seo={"url": "dynamic/"})
+    items_html = []
+    for e in entries:
+        label, cls = _TYPE_LABEL.get(e["type"], (e["type"], "update"))
+        t = esc(e["text"])
+        ts = e["ts"]
+        ts_txt = ts.strftime("%Y-%m-%d %H:%M") if isinstance(ts, datetime.datetime) else ts.strftime("%Y-%m-%d")
+        if e.get("link"):
+            t = f'<a href="../{esc(e["link"])}">{t}</a>'
+        items_html.append(
+            f'<li class="tl-item tl-{esc(cls)}">'
+            f'<div class="tl-line" aria-hidden="true"><span class="tl-dot"></span></div>'
+            f'<div class="tl-card"><div class="tl-head">'
+            f'<span class="tl-badge">{esc(label)}</span><time class="tl-time">{ts_txt}</time></div>'
+            f'<div class="tl-text">{t}</div></div></li>')
+    title = esc(dc.get("title") or "动态")
+    sub = esc(dc.get("subtitle") or "站点新鲜事，像朋友圈一样的时间线")
+    body = (f'<div class="page post"><header class="post-header"><h1 class="page-title">{title}'
+            f'</h1><p class="page-sub">{sub}</p></header>'
+            f'<ul class="timeline">{ "".join(items_html) }</ul></div>')
+    return r.page(title, body, root="../", active="dynamic", page_type="dynamic", seo={"url": "dynamic/"})
+
+
+# ------------------------------------------------------------ 插件页 ----
+
+def render_plugins_index():
+    """插件注册表页 /plugins/: 展示已加载插件生态"""
+    r = Renderer()
+    pls = load_plugins()
+    pc = CONFIG.get("plugins") or {}
+    if not pls:
+        empty = ('<p class="empty">尚未安装插件。在仓库根目录创建 <code>plugins/&lt;名称&gt;/plugin.json</code> '
+                 '即可接入生态，详见 <a href="../docs/">文档</a>。</p>')
+        body = (f'<div class="page post"><header class="post-header"><h1 class="page-title">插件'
+                f'</h1><p class="page-sub">插件生态 · 构建期扩展钩子</p></header>{empty}</div>')
+        return r.page("插件", body, root="../", active="plugins", page_type="plugins", seo={"url": "plugins/"})
+    cards = []
+    for pl in pls:
+        meta = pl["meta"]
+        caps = []
+        mod = pl.get("module")
+        if mod:
+            for hook in ("process", "widget", "register_pages"):
+                if callable(getattr(mod, hook, None)):
+                    caps.append(hook)
+        caps_txt = "".join(f'<span class="chip chip-tag">{esc(c)}</span>' for c in caps) or '<span class="chip chip-tag">无钩子</span>'
+        cards.append(f'''
+<li class="plugin-card">
+  <div class="plugin-head">
+    <b>{esc(meta.get("name", ""))}</b>
+    <span class="plugin-ver">v{esc(meta.get("version", ""))}</span>
+  </div>
+  <p class="plugin-desc">{esc(meta.get("description", ""))}</p>
+  <p class="plugin-meta">作者：{esc(meta.get("author", ""))} · 目录：plugins/{esc(pl["dir"])}</p>
+  <div class="plugin-caps">{caps_txt}</div>
+</li>''')
+    body = (f'<div class="page post"><header class="post-header"><h1 class="page-title">插件'
+            f'</h1><p class="page-sub">插件生态 · {len(pls)} 个已加载 · 构建期扩展钩子</p></header>'
+            f'<ul class="plugin-list">{"".join(cards)}</ul></div>')
+    return r.page("插件", body, root="../", active="plugins", page_type="plugins", seo={"url": "plugins/"})
 
 
 def render_links(friends, submit_url="", circle=None):
@@ -1299,7 +1841,7 @@ def render_feed(posts):
     return xml
 
 
-def render_sitemap(posts, pages, docs):
+def render_sitemap(posts, pages, docs, notes=None):
     from urllib.parse import quote
     base = SITE.get("base", "").rstrip("/") + "/"
     today = datetime.date.today().isoformat()
@@ -1319,12 +1861,20 @@ def render_sitemap(posts, pages, docs):
             url_entry("archive/", freq="weekly", pri="0.8"),
             url_entry("tags/", freq="weekly", pri="0.6"),
             url_entry("search/", freq="monthly", pri="0.3")]
+    if CONFIG.get("dynamic", {}).get("enabled"):
+        urls.append(url_entry("dynamic/", freq="daily", pri="0.8"))
+    if (CONFIG.get("notes") or {}).get("enabled"):
+        urls.append(url_entry("notes/", freq="weekly", pri="0.8"))
+    if (CONFIG.get("plugins") or {}).get("enabled"):
+        urls.append(url_entry("plugins/", freq="monthly", pri="0.3"))
     if docs:
         urls.append(url_entry("docs/", freq="weekly", pri="0.9"))
     for pg in pages:
         urls.append(url_entry(pg["url"], freq="weekly", pri="0.7"))
     for d in docs:
         urls.append(url_entry(d["url"], d.get("date") or today, freq="monthly", pri="0.8"))
+    for n in notes or []:
+        urls.append(url_entry(n["url"], n.get("date") or today, freq="monthly", pri="0.6"))
     for p in posts:
         urls.append(url_entry(p["url"], p["date"], freq="monthly", pri="1.0"))
     return ('<?xml version="1.0" encoding="utf-8"?>\n'
@@ -1332,7 +1882,7 @@ def render_sitemap(posts, pages, docs):
             + "\n".join(urls) + "\n</urlset>")
 
 
-def render_search_index(posts, pages, docs=None):
+def render_search_index(posts, pages, docs=None, notes=None):
     data = []
     for p in posts:
         data.append({
@@ -1367,6 +1917,17 @@ def render_search_index(posts, pages, docs=None):
             "summary": d.get("summary") or d["content_text"][:160],
             "content": d["content_text"][:400],
         })
+    for n in notes or []:
+        data.append({
+            "type": "note",
+            "title": n["title"],
+            "url": SITE.get("base", "").rstrip("/") + "/" + n["url"],
+            "date": n["date_str"],
+            "category": "笔记",
+            "tags": n.get("tags") or [],
+            "summary": n.get("summary") or n["content_text"][:160],
+            "content": n["content_text"][:400],
+        })
     return json.dumps(data, ensure_ascii=False, indent=1)
 
 
@@ -1392,9 +1953,13 @@ def build():
         shutil.rmtree(DIST)
     DIST.mkdir(parents=True)
 
+    # 署名标准锁定: 配置被改动立即崩溃 (不可修改/篡改防线)
+    assert_standard_sign()
+
     posts = load_posts()
     pages = load_pages()
     docs = load_docs()
+    notes = load_notes()
     friends = CONFIG.get("friends") or []
     links = CONFIG.get("links") or {}
     forms = CONFIG.get("forms") or []
@@ -1402,8 +1967,8 @@ def build():
     global _ALL_POSTS
     _ALL_POSTS = posts
 
-    # 首页 + 分页
-    per_page = int(SITE.get("posts_per_page", 6))
+    # 首页 + 分页 (每页 posts_per_page 篇, 默认 10)
+    per_page = int(SITE.get("posts_per_page", 10))
     total_pages = max(1, (len(posts) + per_page - 1) // per_page)
     for page_no in range(1, total_pages + 1):
         if page_no == 1:
@@ -1426,6 +1991,22 @@ def build():
     write("docs/index.html", render_docs_index(docs))
     for d in docs:
         write(f"docs/{d['slug']}/index.html", render_doc(d, docs))
+
+    # 笔记
+    if (CONFIG.get("notes") or {}).get("enabled"):
+        write("notes/index.html", render_notes_index(notes))
+        for n in notes:
+            write(f"notes/{n['slug']}/index.html", render_note(n, notes))
+
+    # 动态 (朋友圈式时间线)
+    if (CONFIG.get("dynamic") or {}).get("enabled"):
+        write("dynamic/index.html", render_dynamic(posts, notes))
+
+    # 插件注册表页 + 插件注册的额外静态页
+    if (CONFIG.get("plugins") or {}).get("enabled"):
+        write("plugins/index.html", render_plugins_index())
+        for path, html in plugin_pages():
+            write(path, html)
 
     # 友链 (+ 朋友圈 RSS 聚合, 失败安全降级)
     circle, c_ok, c_total = fetch_friend_circle(friends)
@@ -1456,8 +2037,8 @@ def build():
 
     # 数据与协议
     write("feed.xml", render_feed(posts))
-    write("sitemap.xml", render_sitemap(posts, pages, docs))
-    write("search_index.json", render_search_index(posts, pages, docs))
+    write("sitemap.xml", render_sitemap(posts, pages, docs, notes))
+    write("search_index.json", render_search_index(posts, pages, docs, notes))
     # robots: 放行抓取 + 声明 sitemap; 绝不排除 IndexNow key 文件
     base_url = SITE.get("base", "").rstrip("/") + "/"
     robots = ("User-agent: *\n"
@@ -1481,9 +2062,14 @@ def build():
         for css_fp in (DIST / "static" / "css").rglob("*.css"):
             css_fp.write_text(minify_css(css_fp.read_text(encoding="utf-8")), encoding="utf-8")
 
-    print(f"[OK] 共生成 {len(posts)} 篇文章, {len(pages)} 个页面, {len(docs)} 篇文档, {len(friends)} 个友链, {len(forms)} 个表单, {len(links)} 条短链, 分页 {total_pages} 页")
+    # 署名完整性校验 (防移除防线): 缺少署名/令牌即构建崩溃
+    verify_build_integrity()
+
+    print(f"[OK] 共生成 {len(posts)} 篇文章, {len(pages)} 个页面, {len(docs)} 篇文档, {len(notes)} 篇笔记, "
+          f"{len(friends)} 个友链, {len(forms)} 个表单, {len(links)} 条短链, 分页 {total_pages} 页")
     if c_total:
         print(f"[OK] 友链朋友圈: 抓取成功 {c_ok}/{c_total} 个 RSS 源")
+    print(f"[OK] 插件: {len(load_plugins())} 个已加载")
     print(f"[OK] 站点输出目录: {DIST}")
 
 
