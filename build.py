@@ -41,6 +41,9 @@ def load_config():
 CONFIG = load_config()
 SITE = CONFIG["site"]
 
+# 构建期全局文章列表 (供 Renderer 右侧栏组件使用, build() 中填充)
+_ALL_POSTS = []
+
 
 def assets_version():
     """静态资源版本号: 优先用 CI 中的提交 SHA, 否则本地 git 短 SHA, 兜底时间戳。
@@ -301,6 +304,7 @@ def load_posts():
         summary = meta.get("summary") or ""
         cover = meta.get("cover") or ""
         pinned = str(meta.get("pinned", "")).lower() in ("true", "1", "yes", "置顶")
+        featured = str(meta.get("featured", "")).lower() in ("true", "1", "yes", "封面")
         content_html = md_to_html(body)
         word_count = len(re.sub(r"\s", "", body))
         reading_min = max(1, round(word_count / 420))
@@ -316,6 +320,7 @@ def load_posts():
             "summary": summary,
             "cover": cover,
             "pinned": pinned,
+            "featured": featured,
             "url": f"posts/{slug}/",
             "content_html": content_html,
             "content_text": re.sub(r"<[^>]+>", "", content_html),
@@ -330,13 +335,17 @@ def load_posts():
 
 
 def load_pages():
+    """独立页面: content/pages/*.md 走 Markdown; *.html 或 front matter raw=true 时原样透传(自定义 HTML)"""
     pages = []
-    for fp in sorted((CONTENT / "pages").glob("*.md")):
+    for fp in sorted((CONTENT / "pages").iterdir()):
+        if fp.suffix not in (".md", ".html"):
+            continue
         raw = fp.read_text(encoding="utf-8")
         meta, body = parse_front_matter(raw)
         slug = meta.get("slug") or fp.stem
         title = meta.get("title") or slug
-        content_html = md_to_html(body)
+        is_raw = fp.suffix == ".html" or str(meta.get("raw", "")).lower() in ("true", "1", "yes")
+        content_html = body if is_raw else md_to_html(body)
         pages.append({
             "slug": slug,
             "title": title,
@@ -345,6 +354,37 @@ def load_pages():
             "content_text": re.sub(r"<[^>]+>", "", content_html),
         })
     return pages
+
+
+def load_docs():
+    """文档: content/docs/*.md, 支持 category 归类, 生成 /docs/ 目录页与 /docs/<slug>/ 详情页"""
+    docs = []
+    for fp in sorted((CONTENT / "docs").glob("*.md")):
+        raw = fp.read_text(encoding="utf-8")
+        meta, body = parse_front_matter(raw)
+        if str(meta.get("draft", "")).lower() in ("true", "1", "yes"):
+            continue
+        date = parse_date(meta.get("date")) or datetime.date.fromtimestamp(fp.stat().st_mtime)
+        slug = meta.get("slug") or fp.stem
+        title = meta.get("title") or slug
+        category = meta.get("category") or "使用指南"
+        summary = meta.get("summary") or ""
+        tmp = Markdown()
+        content_html = tmp.render(body)
+        docs.append({
+            "slug": slug,
+            "title": title,
+            "date": date,
+            "date_str": date_fmt(date),
+            "category": category,
+            "summary": summary,
+            "url": f"docs/{slug}/",
+            "content_html": content_html,
+            "content_text": re.sub(r"<[^>]+>", "", content_html),
+            "headings": tmp.headings,
+        })
+    docs.sort(key=lambda d: d["date"], reverse=True)
+    return docs
 
 
 def compute_indexes(posts):
@@ -389,7 +429,7 @@ class Renderer:
         self.social = CONFIG.get("social", {})
         self.dist = DIST
 
-    def page(self, title, body, *, root, active="", description="", extra_head=""):
+    def page(self, title, body, *, root, active="", description="", extra_head="", side_toc="", show_right=True):
         nav_html = []
         for item in self.nav:
             url = item.get("url", "")
@@ -407,6 +447,7 @@ class Renderer:
                 icons += f'<a class="social-link" href="{esc(href)}" target="_blank" rel="noopener nofollow" aria-label="{esc(key)}">{esc(key)}</a>'
             if icons:
                 social_html = f'<div class="social">{icons}</div>'
+        right_html = self.right_bar_html(root) if show_right else ""
         return self.base.replace("{{title}}", esc(title)) \
             .replace("{{site_title}}", esc(SITE["title"])) \
             .replace("{{subtitle}}", esc(SITE.get("subtitle", ""))) \
@@ -414,12 +455,46 @@ class Renderer:
             .replace("{{root}}", root) \
             .replace("{{nav}}", "".join(nav_html)) \
             .replace("{{social}}", social_html) \
+            .replace("{{side_toc}}", side_toc) \
+            .replace("{{right_bar}}", right_html) \
             .replace("{{site_year}}", str(datetime.date.today().year)) \
             .replace("{{site_author}}", esc(SITE.get("author", ""))) \
             .replace("{{extra_head}}", extra_head) \
             .replace("{{analytics}}", analytics_html()) \
             .replace("{{assets_version}}", assets_version()) \
             .replace("{{content}}", body)
+
+    def right_bar_html(self, root):
+        """右侧栏组件 (最新文章 / 标签云 / 归档 / 简介), 由 config.sidebar_right 控制, 可整体开关"""
+        cfg = CONFIG.get("sidebar_right") or {}
+        if not cfg.get("enabled"):
+            return ""
+        widgets = []
+        # 最新文章
+        if cfg.get("show_latest", True):
+            n = int(cfg.get("latest_count", 5))
+            lst = [p for p in _ALL_POSTS if not p.get("pinned")][:n] or _ALL_POSTS[:n]
+            items = "".join(
+                f'<li><a href="{root}{p["url"]}">{esc(p["title"])}</a><span class="w-date">{p["date_str"]}</span></li>'
+                for p in lst)
+            if lst:
+                widgets.append(f'<div class="widget"><h3>最新文章</h3><ul class="widget-list">{items}</ul></div>')
+        # 标签云
+        if cfg.get("show_tags", True):
+            _, tags, _ = compute_indexes(_ALL_POSTS)
+            top = sorted(tags.items(), key=lambda kv: -len(kv[1]))[:cfg.get("tags_count", 16)]
+            chips = "".join(
+                f'<a class="chip chip-tag" href="{root}tags/{slugify(t)}/">{esc(t)}<em>{len(ps)}</em></a>'
+                for t, ps in top)
+            if chips:
+                widgets.append(f'<div class="widget"><h3>标签</h3><div class="widget-tags">{chips}</div></div>')
+        # 归档
+        if cfg.get("show_archive", True):
+            widgets.append(
+                f'<div class="widget"><h3>归档</h3><ul class="widget-list"><li><a href="{root}archive/">全部文章 ({len(_ALL_POSTS)})</a><span class="w-date">{SITE["since"]} 至今</span></li></ul></div>')
+        if not widgets:
+            return ""
+        return '<aside class="right-bar" aria-label="侧边栏">' + "".join(widgets) + "</aside>"
 
 
 def analytics_html():
@@ -521,13 +596,39 @@ def render_index(posts, page_no=1, per_page=6):
 
     hero = ""
     if page_no == 1:
-        hero = f'''
+        hero_cfg = CONFIG.get("hero") or {}
+        if hero_cfg.get("enabled", True):
+            h_title = hero_cfg.get("title") or SITE.get("title", "")
+            h_desc = hero_cfg.get("description") or SITE.get("description", "")
+            hero = f'''
 <section class="hero">
-  <h1>{esc(SITE.get("title", ""))}</h1>
-  <p class="hero-sub">{esc(SITE.get("description", ""))}</p>
+  <h1>{esc(h_title)}</h1>
+  <p class="hero-sub">{esc(h_desc)}</p>
 </section>'''
 
-    body = hero + '<div class="cards">' + "".join(cards) + "</div>" + pagination
+    # 封面文章区: 首页首屏展示 featured 标记的文章 (封面图大卡)
+    featured_cards = ""
+    if page_no == 1:
+        feats = [p for p in posts if p.get("featured")][:3]
+        if feats:
+            feats_html = []
+            for p in feats:
+                if p.get("cover"):
+                    fcov = f'<img src="{esc(p["cover"])}" alt="" loading="lazy">'
+                else:
+                    fcov = '<span class="featured-cover-placeholder"></span>'
+                feats_html.append(f'''
+<a class="featured-card" href="{root}{p["url"]}">
+  <div class="featured-cover">{fcov}<span class="featured-badge">封面文章</span></div>
+  <div class="featured-info">
+    <span class="date">{p["date_str"]}</span>
+    <h2>{esc(p["title"])}</h2>
+    <p>{esc(p["summary"] or p["content_text"][:80])}</p>
+  </div>
+</a>''')
+            featured_cards = '<section class="featured-row">' + "".join(feats_html) + "</section>"
+
+    body = hero + featured_cards + '<div class="cards">' + "".join(cards) + "</div>" + pagination
     return r.page(SITE.get("title", ""), body, root=root, active="index",
                   description=SITE.get("description", ""))
 
@@ -542,13 +643,13 @@ def render_post(post, posts):
             next_p = posts[idx - 1] if idx > 0 else None              # 更新的
             break
 
-    toc = ""
+    side_toc = ""
     if post["headings"]:
         items = []
         for lv, aid, text in post["headings"]:
             cls = "toc-h3" if lv >= 3 else ""
             items.append(f'<a class="{cls}" href="#{aid}">{text}</a>')
-        toc = '<nav class="toc"><div class="toc-title">目录</div><div class="toc-links">' + "".join(items) + "</div></nav>"
+        side_toc = '<nav class="side-toc"><div class="side-toc-title">文章目录</div><div class="side-toc-links">' + "".join(items) + "</div></nav>"
 
     tags_html = "".join(
         f'<a class="chip chip-tag" href="{root}tags/{slugify(t)}/">{esc(t)}</a>'
@@ -577,7 +678,6 @@ def render_post(post, posts):
     <div class="post-tags">{tags_html}</div>
   </header>
   <div class="post-layout">
-    {toc}
     <div class="post-body">{post["content_html"]}</div>
   </div>
   <footer class="post-footer">
@@ -586,7 +686,7 @@ def render_post(post, posts):
   {rel_html}
 </article>''' + comments_html()
     return r.page(post["title"], article, root=root, active="",
-                  description=post.get("summary", ""),
+                  description=post.get("summary", ""), side_toc=side_toc,
                   extra_head=f'<link rel="stylesheet" href="../../static/css/highlight.css?v={assets_version()}">')
 
 
@@ -647,13 +747,166 @@ def render_search():
 <div id="search-hint" class="search-hint">输入关键词即可全文检索本站内容</div>
 <ul id="search-results" class="search-results"></ul></div>
 <script src="../static/js/search.js?v={assets_version()}" defer></script>'''
-    return r.page("搜索", body, root="../", active="search")
+    return r.page("搜索", body, root="../", active="search", show_right=False)
 
 
 def render_404():
     r = Renderer()
     body = '<div class="page post notfound"><h1 class="page-title">404</h1><p class="hero-sub">页面不存在或已被移动。</p><a class="btn" href="index.html">返回首页</a></div>'
-    return r.page("页面未找到", body, root="", active="")
+    return r.page("页面未找到", body, root="", active="", show_right=False)
+
+
+# ----------------------------------------------------- 文档 / 友链 / 问卷 / 短链 ----
+
+def render_docs_index(docs):
+    """文档目录页 /docs/: 按分类分组展示"""
+    r = Renderer()
+    groups = {}
+    for d in docs:
+        groups.setdefault(d["category"], []).append(d)
+    blocks = []
+    for cat in sorted(groups):
+        items = "".join(
+            f'<li><span class="date">{d["date_str"]}</span><a href="../{d["url"]}">{esc(d["title"])}</a><span class="cat">{esc(d.get("summary") or d["category"])}</span></li>'
+            for d in groups[cat])
+        blocks.append(f'<section class="archive-group"><h2>{esc(cat)} <em>{len(groups[cat])}</em></h2><ul>{items}</ul></section>')
+    body = f'<div class="page post"><header class="post-header"><h1 class="page-title">文档</h1><p class="page-sub">共 {len(docs)} 篇文档</p></header><div class="archive">{"".join(blocks)}</div></div>'
+    return r.page("文档", body, root="../", active="docs")
+
+
+def render_doc(doc, docs):
+    """文档详情页 /docs/<slug>/: 含目录与文档内前后篇"""
+    r = Renderer()
+    root = "../../"
+    side_toc = ""
+    if doc["headings"]:
+        items = []
+        for lv, aid, text in doc["headings"]:
+            cls = "toc-h3" if lv >= 3 else ""
+            items.append(f'<a class="{cls}" href="#{aid}">{text}</a>')
+        side_toc = '<nav class="side-toc"><div class="side-toc-title">文档目录</div><div class="side-toc-links">' + "".join(items) + "</div></nav>"
+    prev = next_d = None
+    for idx, d in enumerate(docs):
+        if d["slug"] == doc["slug"]:
+            prev = docs[idx + 1] if idx + 1 < len(docs) else None
+            next_d = docs[idx - 1] if idx > 0 else None
+            break
+    prev_html = f'<a class="nav-item prev" href="{root}{prev["url"]}"><span>← 上一篇</span><b>{esc(prev["title"])}</b></a>' if prev else "<span></span>"
+    next_html = f'<a class="nav-item next" href="{root}{next_d["url"]}"><span>下一篇 →</span><b>{esc(next_d["title"])}</b></a>' if next_d else "<span></span>"
+    article = f'''
+<article class="post">
+  <header class="post-header">
+    <div class="post-meta">
+      <span class="date">{doc["date_str"]}</span>
+      <span class="chip chip-cat">{esc(doc["category"])}</span>
+      <a class="crumb" href="../../docs/">← 返回文档目录</a>
+    </div>
+    <h1 class="post-title">{esc(doc["title"])}</h1>
+  </header>
+  <div class="post-layout">
+    <div class="post-body">{doc["content_html"]}</div>
+  </div>
+  <footer class="post-footer"><nav class="post-nav">{prev_html}{next_html}</nav></footer>
+</article>'''
+    return r.page(doc["title"], article, root=root, active="docs",
+                  description=doc.get("summary", ""), side_toc=side_toc)
+
+
+def render_links(friends, submit_url=""):
+    """友链页 /links/"""
+    r = Renderer()
+    root = "../"
+    if not friends:
+        items = '<li class="empty">暂无友链，欢迎申请加入。</li>'
+    else:
+        cards = []
+        for f in friends:
+            avatar = f.get("avatar") or ""
+            img = f'<img src="{esc(avatar)}" alt="" loading="lazy">' if avatar else f'<span class="avatar-ph">{esc((f.get("name") or "友")[0])}</span>'
+            cards.append(f'''
+<li class="friend-card">
+  <div class="friend-avatar">{img}</div>
+  <div class="friend-meta">
+    <a href="{esc(f.get("url", "#"))}" target="_blank" rel="noopener nofollow"><b>{esc(f.get("name", ""))}</b></a>
+    <p>{esc(f.get("desc", ""))}</p>
+  </div>
+</li>''')
+        items = "".join(cards)
+    submit_block = ""
+    if submit_url:
+        submit_block = f'<div class="link-submit"><p>想交换友链？<a class="btn" href="{esc(submit_url)}" target="_blank" rel="noopener nofollow">申请加入</a></p></div>'
+    body = f'<div class="page post"><header class="post-header"><h1 class="page-title">友情链接</h1><p class="page-sub">共 {len(friends)} 位伙伴</p></header><ul class="friend-list">{items}</ul>{submit_block}</div>'
+    return r.page("友情链接", body, root=root, active="links")
+
+
+def render_survey(form):
+    """问卷/单表页 /forms/<slug>/: 无后端架构, 配置 endpoint 则 AJAX 提交, 否则 mailto 聚合"""
+    r = Renderer()
+    root = "../../"
+    slug = form.get("slug", "form")
+    title = form.get("title", "问卷")
+    endpoint = form.get("endpoint", "")
+    fields_html = []
+    for f in form.get("fields", []):
+        fname = esc(f.get("name", ""))
+        flabel = esc(f.get("label", f.get("name", "")))
+        req = " required" if f.get("required") else ""
+        ph = f' placeholder="{esc(f.get("placeholder", ""))}"' if f.get("placeholder") else ""
+        ftype = f.get("type", "text")
+        if ftype == "textarea":
+            fields_html.append(f'<label class="form-field"><span>{flabel}</span><textarea name="{fname}"{req}{ph} rows="4"></textarea></label>')
+        elif ftype == "select":
+            opts = "".join(f'<option value="{esc(o)}">{esc(o)}</option>' for o in f.get("options", []))
+            fields_html.append(f'<label class="form-field"><span>{flabel}</span><select name="{fname}"{req}>{opts}</select></label>')
+        else:
+            fields_html.append(f'<label class="form-field"><span>{flabel}</span><input type="{esc(ftype)}" name="{fname}"{req}{ph}></label>')
+    note = esc(form.get("note", ""))
+    # 提交逻辑: 配置了 endpoint 的走 fetch (如 Formspree/表单服务), 否则组装 mailto(无后端)
+    js = '''<script>
+(function () {
+  var form = document.getElementById('survey-form');
+  if (!form) return;
+  form.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var parts = [];
+    new FormData(form).forEach(function (v, k) { parts.push(k + ': ' + v); });
+    var ep = form.getAttribute('data-endpoint');
+    if (ep) {
+      fetch(ep, { method: 'POST', body: new FormData(form) })
+        .then(function () { alert('提交成功，感谢反馈！'); form.reset(); })
+        .catch(function () { sendMail(parts); });
+    } else { sendMail(parts); }
+  });
+  function sendMail(parts) {
+    var subject = encodeURIComponent('{subject}');
+    var bodyTxt = encodeURIComponent(parts.join('\\n'));
+    window.location.href = 'mailto:{mailto}?subject=' + subject + '&body=' + bodyTxt;
+  }
+})();
+</script>'''.replace("{subject}", title).replace("{mailto}", SITE.get("email", ""))
+    body = f'''<div class="page post"><header class="post-header"><h1 class="page-title">{esc(title)}</h1></header>
+<form class="survey" id="survey-form" data-endpoint="{esc(endpoint)}" novalidate>
+  <div class="survey-fields">{''.join(fields_html)}</div>
+  <div class="form-actions"><button class="btn" type="submit">提交</button><span class="form-note">{note}</span></div>
+</form></div>{js}'''
+    return r.page(title, body, root=root, active="", description=note)
+
+
+def render_shortlink(key, target):
+    """短链接落地页 /go/<key>/: meta refresh + JS 双重跳转, 无 JS 时提供手动链接"""
+    t = esc(target)
+    return f'''<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="refresh" content="0; url={t}">
+<script>location.replace({json.dumps(target)});</script>
+<title>跳转中 · {esc(SITE.get("title", ""))}</title>
+</head>
+<body>
+<p style="font-family:sans-serif;text-align:center;padding:3em 1em">正在跳转到 <a href="{t}">{t}</a>，未自动跳转请点击。</p>
+</body>
+</html>'''
 
 
 # --------------------------------------------------------------- Feed ----
@@ -688,7 +941,7 @@ def render_feed(posts):
     return xml
 
 
-def render_sitemap(posts, pages):
+def render_sitemap(posts, pages, docs):
     base = SITE.get("base", "").rstrip("/") + "/"
     urls = [
         f"  <url><loc>{base}</loc></url>",
@@ -696,14 +949,18 @@ def render_sitemap(posts, pages):
         f"  <url><loc>{base}tags/</loc></url>",
         f"  <url><loc>{base}search/</loc></url>",
     ]
+    if docs:
+        urls.append(f"  <url><loc>{base}docs/</loc></url>")
     for pg in pages:
         urls.append(f'  <url><loc>{base}{pg["url"]}</loc></url>')
+    for d in docs:
+        urls.append(f'  <url><loc>{base}{d["url"]}</loc></url>')
     for p in posts:
         urls.append(f'  <url><loc>{base}{p["url"]}</loc></url>')
     return '<?xml version="1.0" encoding="utf-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' + "\n".join(urls) + "\n</urlset>"
 
 
-def render_search_index(posts, pages):
+def render_search_index(posts, pages, docs=None):
     data = []
     for p in posts:
         data.append({
@@ -727,6 +984,17 @@ def render_search_index(posts, pages):
             "summary": pg["content_text"][:160],
             "content": pg["content_text"][:400],
         })
+    for d in docs or []:
+        data.append({
+            "type": "doc",
+            "title": d["title"],
+            "url": SITE.get("base", "").rstrip("/") + "/" + d["url"],
+            "date": d["date_str"],
+            "category": d["category"],
+            "tags": [],
+            "summary": d.get("summary") or d["content_text"][:160],
+            "content": d["content_text"][:400],
+        })
     return json.dumps(data, ensure_ascii=False, indent=1)
 
 
@@ -745,6 +1013,13 @@ def build():
 
     posts = load_posts()
     pages = load_pages()
+    docs = load_docs()
+    friends = CONFIG.get("friends") or []
+    links = CONFIG.get("links") or {}
+    forms = CONFIG.get("forms") or []
+    link_submit = CONFIG.get("link_submit", "")
+    global _ALL_POSTS
+    _ALL_POSTS = posts
 
     # 首页 + 分页
     per_page = int(SITE.get("posts_per_page", 6))
@@ -759,12 +1034,29 @@ def build():
     for p in posts:
         write(f"posts/{p['slug']}/index.html", render_post(p, posts))
 
-    # 独立页面
+    # 独立页面 (含自定义 HTML 页面)
     for pg in pages:
         if pg["slug"] == "index":
             write("index.html", render_page(pg))
         else:
             write(f"{pg['slug']}/index.html", render_page(pg))
+
+    # 文档
+    write("docs/index.html", render_docs_index(docs))
+    for d in docs:
+        write(f"docs/{d['slug']}/index.html", render_doc(d, docs))
+
+    # 友链
+    write("links/index.html", render_links(friends, link_submit))
+
+    # 问卷 / 表单
+    for form in forms:
+        write(f"forms/{form['slug']}/index.html", render_survey(form))
+
+    # 短链接落地页
+    for key, target in links.items():
+        if key and isinstance(target, str) and target.startswith(("http://", "https://", "mailto:")):
+            write(f"go/{key}/index.html", render_shortlink(key, target))
 
     # 归档 / 标签 / 分类
     write("archive/index.html", render_archive(posts))
@@ -782,8 +1074,8 @@ def build():
 
     # 数据与协议
     write("feed.xml", render_feed(posts))
-    write("sitemap.xml", render_sitemap(posts, pages))
-    write("search_index.json", render_search_index(posts, pages))
+    write("sitemap.xml", render_sitemap(posts, pages, docs))
+    write("search_index.json", render_search_index(posts, pages, docs))
     write("robots.txt", "User-agent: *\nAllow: /\n")
 
     # 静态资源
@@ -791,7 +1083,7 @@ def build():
     if src_static.exists():
         shutil.copytree(src_static, DIST / "static")
 
-    print(f"[OK] 共生成 {len(posts)} 篇文章, {len(pages)} 个页面, 分页 {total_pages} 页")
+    print(f"[OK] 共生成 {len(posts)} 篇文章, {len(pages)} 个页面, {len(docs)} 篇文档, {len(friends)} 个友链, {len(forms)} 个表单, {len(links)} 条短链, 分页 {total_pages} 页")
     print(f"[OK] 站点输出目录: {DIST}")
 
 

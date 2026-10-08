@@ -16,6 +16,8 @@
     { "key": "index",   "label": "首页", "url": "" },
     { "key": "archive", "label": "归档", "url": "archive/" },
     { "key": "tags",    "label": "标签", "url": "tags/" },
+    { "key": "docs",    "label": "文档", "url": "docs/" },
+    { "key": "links",   "label": "友链", "url": "links/" },
     { "key": "search",  "label": "搜索", "url": "search/" },
     { "key": "about",   "label": "关于", "url": "about/" }
   ],
@@ -37,5 +39,45 @@
     "enabled": true,
     "provider": "busuanzi",
     "script": ""
-  }
+  },
+  "hero": {
+    "enabled": true,
+    "title": "",
+    "description": ""
+  },
+  "sidebar_right": {
+    "enabled": true,
+    "show_latest": true,
+    "latest_count": 5,
+    "show_tags": true,
+    "tags_count": 16,
+    "show_archive": true
+  },
+  "friends": [
+    {
+      "name": "科技酱",
+      "url": "https://github.com/techjiang",
+      "desc": "独立开发者，OverCome 博客系统作者",
+      "avatar": ""
+    }
+  ],
+  "link_submit": "https://github.com/techjiang/OverCome/issues/new?title=%E7%94%B3%E8%AF%B7%E5%8F%8B%E9%93%BE&body=%E7%BD%91%E7%AB%99%E5%90%8D%E7%A7%B0%3A%0A%E7%BD%91%E5%9D%80%3A%0A%E7%AE%80%E4%BB%8B%3A%0A%E5%A4%B4%E5%83%8F%3A",
+  "links": {
+    "gh": "https://github.com/techjiang",
+    "rd": "https://github.com/techjiang/OverCome"
+  },
+  "forms": [
+    {
+      "slug": "feedback",
+      "title": "意见反馈",
+      "note": "无后端架构：默认通过邮件提交；如需服务端收集，可在 config.json 配置 endpoint。",
+      "endpoint": "",
+      "fields": [
+        { "name": "name", "label": "称呼", "type": "text", "placeholder": "你的称呼", "required": true },
+        { "name": "contact", "label": "联系方式", "type": "text", "placeholder": "邮箱 / 微信 / 其他", "required": false },
+        { "name": "type", "label": "反馈类型", "type": "select", "options": ["建议", "问题", "合作", "其他"], "required": true },
+        { "name": "message", "label": "内容", "type": "textarea", "placeholder": "请详细描述你的想法…", "required": true }
+      ]
+    }
+  ]
 }
