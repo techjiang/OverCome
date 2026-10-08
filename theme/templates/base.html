@@ -8,6 +8,8 @@
 {{seo_head}}
 <link rel="alternate" type="application/atom+xml" title="{{site_title}} RSS" href="{{root}}feed.xml">
 <link rel="icon" href="{{root}}static/img/favicon.svg" type="image/svg+xml">
+<link rel="icon" type="image/png" sizes="192x192" href="{{root}}static/img/favicon-192.png">
+<link rel="apple-touch-icon" sizes="180x180" href="{{root}}static/img/apple-touch-icon.png">
 <link rel="stylesheet" href="{{root}}static/css/style.css?v={{assets_version}}">
 <link rel="stylesheet" href="{{root}}static/css/viewer.css?v={{assets_version}}">
 <style>:root{--right-bar-width:{{right_w}}px}</style>
@@ -27,7 +29,7 @@
   <aside class="sidebar">
     <div class="brand">
       <a class="brand-link" href="{{root}}">
-        <span class="brand-mark" aria-hidden="true"></span>
+        <img class="brand-mark" src="{{root}}static/img/brand.svg" alt="{{site_title}} logo" width="40" height="40">
         <span class="brand-text">
           <b>{{site_title}}</b>
           <i>{{subtitle}}</i>
@@ -50,7 +52,7 @@
 <div class="content">
       <header class="mobile-bar">
         <a class="brand-link mobile-brand" href="{{root}}">
-          <span class="brand-mark" aria-hidden="true"></span>
+          <img class="brand-mark" src="{{root}}static/img/brand.svg" alt="{{site_title}} logo" width="40" height="40">
           <span class="brand-text"><b>{{site_title}}</b></span>
         </a>
         <button class="menu-toggle" id="menu-toggle" type="button" aria-label="打开菜单" aria-expanded="false">

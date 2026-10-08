@@ -110,6 +110,7 @@
       "home": {
         "widgets": [
           "custom:about",
+          "plugin:daily-quote",
           "latest",
           "tags",
           "archive",
@@ -119,6 +120,7 @@
       "post": {
         "widgets": [
           "toc",
+          "plugin:daily-quote",
           "related",
           "latest",
           "tags"
@@ -127,6 +129,7 @@
       "doc": {
         "widgets": [
           "toc",
+          "plugin:daily-quote",
           "latest",
           "tags"
         ]
@@ -134,6 +137,7 @@
       "note": {
         "widgets": [
           "toc",
+          "plugin:daily-quote",
           "latest",
           "tags"
         ]
@@ -141,6 +145,7 @@
       "notes": {
         "widgets": [
           "latest",
+          "plugin:daily-quote",
           "tags",
           "archive"
         ]
@@ -148,6 +153,7 @@
       "dynamic": {
         "widgets": [
           "latest",
+          "plugin:daily-quote",
           "tags",
           "monitor"
         ]
@@ -155,12 +161,14 @@
       "plugins": {
         "widgets": [
           "latest",
+          "plugin:daily-quote",
           "tags"
         ]
       },
       "archive": {
         "widgets": [
           "latest",
+          "plugin:daily-quote",
           "tags",
           "archive"
         ]
@@ -168,12 +176,14 @@
       "tags": {
         "widgets": [
           "latest",
+          "plugin:daily-quote",
           "archive"
         ]
       },
       "links": {
         "widgets": [
           "latest",
+          "plugin:daily-quote",
           "tags",
           "monitor"
         ]
@@ -181,6 +191,7 @@
       "page": {
         "widgets": [
           "latest",
+          "plugin:daily-quote",
           "tags",
           "archive"
         ]
@@ -194,6 +205,7 @@
       "category": {
         "widgets": [
           "latest",
+          "plugin:daily-quote",
           "tags"
         ]
       }

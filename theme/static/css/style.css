@@ -135,9 +135,8 @@ img { max-width: 100%; height: auto; border-radius: 10px; }
 .brand-link:hover { text-decoration: none; }
 
 .brand-mark {
-  width: 38px; height: 38px; border-radius: 11px; flex-shrink: 0;
-  background: var(--accent-grad);
-  box-shadow: inset 0 0 0 2px rgba(255,255,255,.35);
+  width: 40px; height: 40px; border-radius: 11px; flex-shrink: 0;
+  object-fit: contain; display: block;
 }
 
 .brand-text { display: flex; flex-direction: column; line-height: 1.3; }
@@ -215,8 +214,9 @@ html.dark .icon-moon { display: inline-block; }
   display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap;
 }
 .widget-list li:last-child { border-bottom: none; padding-bottom: 2px; }
-.widget-list li .pin-badge { font-size: 10px; padding: 2px 7px; margin: 0; vertical-align: baseline; }
-.widget-list li .pin-badge::before { font-size: 9px; }
+.widget-list li .pin-badge { font-size: 10px; padding: 2px 6px 2px 5px; margin: 0 2px 0 0; vertical-align: 1px; }
+.widget-list li .pin-badge svg { width: 11px; height: 11px; }
+.widget-list li .pin-badge i { display: none; }
 .widget-list a { color: var(--text-soft); font-size: 14px; line-height: 1.5; display: inline; }
 .widget-list a:hover { color: var(--accent-strong); text-decoration: none; }
 .widget-list .w-date { display: inline-block; font-size: 12px; color: var(--text-faint); margin-left: auto; white-space: nowrap; }
@@ -243,12 +243,12 @@ html.dark .icon-moon { display: inline-block; }
 .mobile-bar { display: none; }
 
 /* ---------- 首页 hero ---------- */
-.hero { padding: 18px 0 30px; border-bottom: 1px solid var(--line); margin-bottom: 30px; }
+.hero { padding: 14px 0 24px; border-bottom: 1px solid var(--line); margin-bottom: 28px; }
 .hero h1 { font-family: var(--font-serif); font-size: 30px; font-weight: 700; letter-spacing: .01em; }
 .hero-sub { margin-top: 10px; color: var(--text-soft); font-size: 15px; max-width: 60ch; }
 
 /* ---------- 文章卡片 ---------- */
-.cards { display: flex; flex-direction: column; gap: 22px; }
+.cards { display: flex; flex-direction: column; gap: 20px; }
 
 .card {
   background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
@@ -296,16 +296,18 @@ html.dark .card.card-has-pin { border-top-color: var(--accent-strong); }
 .card-title a { color: var(--text); }
 .card-title a:hover { color: var(--accent-strong); text-decoration: none; }
 
-/* 置顶徽标 */
+/* 置顶徽标: 渐变胶囊 + SVG 图钉, 随 currentColor 适配浅深色 */
 .pin-badge {
-  display: inline-flex; align-items: center; gap: 3px;
+  display: inline-flex; align-items: center; gap: 4px;
   font-size: 11px; font-weight: 600; line-height: 1;
-  color: #fff; background: var(--accent);
-  padding: 3px 8px; border-radius: 999px; margin-right: 8px;
+  color: #fff; background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  padding: 3px 8px 3px 6px; border-radius: 999px; margin-right: 8px;
   vertical-align: 2px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.18);
 }
-.pin-badge::before { content: "📌"; font-size: 10px; }
-html.dark .pin-badge { background: var(--accent-strong); }
+.pin-badge svg { width: 12px; height: 12px; flex: none; }
+.pin-badge i { font-style: normal; letter-spacing: .04em; }
+html.dark .pin-badge { background: linear-gradient(135deg, var(--accent-strong), var(--accent)); }
 
 .card-summary {
   margin-top: 8px; color: var(--text-soft); font-size: 14px;
@@ -356,29 +358,27 @@ html.dark .pin-badge { background: var(--accent-strong); }
 
 /* ---------- 正文排版 ---------- */
 .post-body { min-width: 0; font-size: 15.5px; }
-.post-body > p { margin: 0 0 18px; }
+.post-body > p { margin: 0 0 16px; }
 .post-body > *:last-child { margin-bottom: 0; }
 .post-body h1, .post-body h2, .post-body h3, .post-body h4 {
-  font-family: var(--font-serif);
-  margin: 34px 0 14px; line-height: 1.4; font-weight: 700;
-  scroll-margin-top: 24px;
+  margin: 26px 0 12px; line-height: 1.4; font-weight: 700;
 }
 .post-body h2 { font-size: 22px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
 .post-body h3 { font-size: 18.5px; }
 .post-body h4 { font-size: 16px; }
 .post-body a { text-decoration: underline; text-underline-offset: 3px; }
 .post-body a:hover { text-decoration-thickness: 2px; }
-.post-body ul, .post-body ol { margin: 0 0 18px; padding-left: 1.5em; }
-.post-body li { margin: 5px 0; }
+.post-body ul, .post-body ol { margin: 0 0 16px; padding-left: 1.5em; }
+.post-body li { margin: 6px 0; }
 .post-body li.task { list-style: none; margin-left: -1.4em; display: flex; gap: 8px; align-items: baseline; }
 .post-body li.task input { accent-color: var(--accent); }
 .post-body blockquote {
-  margin: 0 0 18px; padding: 12px 18px; border-left: 3px solid var(--accent);
+  margin: 0 0 16px; padding: 12px 18px; border-left: 3px solid var(--accent);
   background: var(--bg-soft); border-radius: 0 10px 10px 0; color: var(--text-soft);
 }
 .post-body blockquote p { margin-bottom: 8px; }
 .post-body blockquote p:last-child { margin-bottom: 0; }
-.post-body hr { border: none; border-top: 1px solid var(--line); margin: 28px 0; }
+.post-body hr { border: none; border-top: 1px solid var(--line); margin: 24px 0; }
 .post-body strong { font-weight: 700; color: var(--text); }
 .post-body em { font-style: italic; }
 .post-body del { color: var(--text-faint); }
@@ -408,7 +408,7 @@ pre.code-block .code-copy {
 pre.code-block .code-copy:hover { color: var(--accent-strong); border-color: var(--accent); background: var(--accent-soft); }
 pre.code-block .code-copy.copied { color: #3f9d63; border-color: #3f9d63; }
 
-.post-body .table-wrap { overflow-x: auto; margin-bottom: 18px; }
+.post-body .table-wrap { overflow-x: auto; margin-bottom: 16px; }
 .post-body table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .post-body th, .post-body td { border: 1px solid var(--line); padding: 8px 12px; text-align: left; }
 .post-body th { background: var(--bg-soft); font-weight: 600; white-space: nowrap; }
@@ -477,6 +477,7 @@ html.dark .post-body .cls { color: #bfa2e0; }
 .archive-group li a, .flat-list li a { color: var(--text); flex: 1; }
 .archive-group li a:hover, .flat-list li a:hover { color: var(--accent-strong); text-decoration: none; }
 .archive-group li .date, .flat-list li .date { color: var(--text-faint); font-size: 12.5px; min-width: 84px; }
+.archive-group li .pin-badge, .flat-list li .pin-badge { margin: 0 2px 0 0; }
 .archive-group li .cat { color: var(--text-faint); font-size: 12px; background: var(--bg-soft); padding: 1px 8px; border-radius: 999px; }
 
 /* ---------- 标签云 ---------- */

@@ -484,8 +484,12 @@ def load_notes():
 
 
 def pin_badge():
-    """置顶徽标 (复用), 保证全部列表里置顶可见而非摆设"""
-    return '<span class="pin-badge" title="置顶文章">置顶</span>'
+    """置顶徽标 (复用), 保证全部列表里置顶可见而非摆设。
+    SVG 图钉矢量图形替代旧 emoji, 随 currentColor 适配深浅色主题。"""
+    svg = ('<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" '
+           'stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">'
+           '<path d="M9 3.5h6l-0.9 6.4 3.4 3.4v2.2H6.5v-2.2l3.4-3.4L9 3.5z"/><path d="M12 15.5V21"/></svg>')
+    return f'<span class="pin-badge" title="置顶文章">{svg}<i>置顶</i></span>'
 
 
 def compute_indexes(posts):
