@@ -41,6 +41,23 @@ def load_config():
 CONFIG = load_config()
 SITE = CONFIG["site"]
 
+
+def assets_version():
+    """静态资源版本号: 优先用 CI 中的提交 SHA, 否则本地 git 短 SHA, 兜底时间戳。
+    附加到 css/js 链接的 ?v= 参数, 避免 CDN 缓存导致旧资源滞留在边缘节点。"""
+    sha = os.environ.get("GITHUB_SHA", "")
+    if sha:
+        return sha[:8]
+    try:
+        short = os.popen("git -C %s rev-parse --short HEAD" % ROOT).read().strip()
+        if short:
+            return short
+    except Exception:
+        pass
+    return datetime.datetime.now().strftime("%Y%m%d%H%M")
+
+
+
 # ----------------------------------------------------------- 工具函数 ----
 
 def esc(text):
@@ -401,6 +418,7 @@ class Renderer:
             .replace("{{site_author}}", esc(SITE.get("author", ""))) \
             .replace("{{extra_head}}", extra_head) \
             .replace("{{analytics}}", analytics_html()) \
+            .replace("{{assets_version}}", assets_version()) \
             .replace("{{content}}", body)
 
 
@@ -569,7 +587,7 @@ def render_post(post, posts):
 </article>''' + comments_html()
     return r.page(post["title"], article, root=root, active="",
                   description=post.get("summary", ""),
-                  extra_head='<link rel="stylesheet" href="../../static/css/highlight.css">')
+                  extra_head=f'<link rel="stylesheet" href="../../static/css/highlight.css?v={assets_version()}">')
 
 
 def render_page(page):
@@ -624,11 +642,11 @@ def render_category(cat, posts):
 
 def render_search():
     r = Renderer()
-    body = '''<div class="page post"><header class="post-header"><h1 class="page-title">搜索</h1></header>
+    body = f'''<div class="page post"><header class="post-header"><h1 class="page-title">搜索</h1></header>
 <div class="search-box"><input id="search-input" type="search" placeholder="输入关键词，如：Markdown、部署…" autocomplete="off"><button id="search-btn" type="button">搜索</button></div>
 <div id="search-hint" class="search-hint">输入关键词即可全文检索本站内容</div>
 <ul id="search-results" class="search-results"></ul></div>
-<script src="../static/js/search.js" defer></script>'''
+<script src="../static/js/search.js?v={assets_version()}" defer></script>'''
     return r.page("搜索", body, root="../", active="search")
 
 
