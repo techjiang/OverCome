@@ -1,0 +1,725 @@
+# -*- coding: utf-8 -*-
+"""
+OverCome - 零依赖静态博客生成器
+运行: python3 build.py   (输出到 dist/)
+
+仅使用 Python 标准库, 无任何第三方依赖。
+"""
+import json
+import os
+import re
+import shutil
+import html
+import datetime
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+CONTENT = ROOT / "content"
+THEME = ROOT / "theme"
+DIST = ROOT / "dist"
+
+# ---------------------------------------------------------------- 配置 ----
+
+def load_config():
+    cfg_path = ROOT / "config.json"
+    with open(cfg_path, encoding="utf-8") as fp:
+        cfg = json.load(fp)
+    site = cfg["site"]
+    site.setdefault("subtitle", "")
+    site.setdefault("base", "")
+    site.setdefault("timezone", "Asia/Shanghai")
+    site.setdefault("date_format", "%Y-%m-%d")
+    site.setdefault("posts_per_page", 6)
+    site.setdefault("author", site.get("author", ""))
+    site.setdefault("email", "")
+    site.setdefault("since", datetime.date.today().year)
+    site.setdefault("description", "")
+    cfg["site"] = site
+    return cfg
+
+
+CONFIG = load_config()
+SITE = CONFIG["site"]
+
+# ----------------------------------------------------------- 工具函数 ----
+
+def esc(text):
+    return html.escape(str(text), quote=False)
+
+
+def slugify(text):
+    text = str(text).lower().strip()
+    text = re.sub(r"[\s_，,、/]+", "-", text)
+    text = re.sub(r"[^\w\u4e00-\u9fff-]", "", text, flags=re.UNICODE)
+    return text.strip("-")
+
+
+def parse_front_matter(text):
+    """解析 --- 包裹的 front matter (支持 key: value / key: [a, b])"""
+    m = re.match(r"^---\s*\n(.*?)\n---\s*\n?", text, re.S)
+    data = {}
+    body = text
+    if m:
+        body = text[m.end():]
+        for line in m.group(1).splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if ":" not in line:
+                continue
+            key, _, value = line.partition(":")
+            key = key.strip()
+            value = value.strip()
+            if not key:
+                continue
+            if value.startswith("[") and value.endswith("]"):
+                value = [v.strip().strip("'\"") for v in value[1:-1].split(",") if v.strip()]
+            else:
+                value = re.sub(r"^['\"]|['\"]$", "", value)
+            data[key] = value
+    return data, body.strip()
+
+
+def parse_date(s, now=None):
+    if not s:
+        return None
+    s = str(s).strip()
+    m = re.match(r"^(\d{4})-(\d{1,2})-(\d{1,2})", s)
+    if m:
+        try:
+            return datetime.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            return None
+    return None
+
+
+def date_fmt(d, fmt=None):
+    if not d:
+        return ""
+    return d.strftime(fmt or SITE.get("date_format", "%Y-%m-%d"))
+
+
+# ----------------------------------------------------- 轻量 Markdown 解析 ----
+
+class Markdown:
+    """支持常用语法的轻量 Markdown 解析器"""
+
+    def __init__(self):
+        self.headings = []          # [(level, id, text)]
+        self._anchor_counter = {}
+        self._out = []
+
+    # --- 行内解析 ---
+    def inline(self, text):
+        if "`" in text:
+            text = re.sub(r"`([^`]+)`", lambda m: '<code class="inline">%s</code>' % esc(m.group(1)), text)
+
+        def repl_link(m):
+            before, alt, url, title, after = m.group(1), m.group(2), m.group(3), m.group(4), m.group(5)
+            if before and before.endswith("!"):
+                return before[:-1] + f'<img src="{esc(url)}" alt="{esc(alt)}" loading="lazy">' + (f'<span class="img-cap">{esc(title)}</span>' if title else "")
+            cap = self.inline(alt)
+            t = f' title="{esc(title)}"' if title else ""
+            return f'<a href="{esc(url)}" target="_blank" rel="noopener nofollow"{t}>{cap}</a>' + after
+
+        text = re.sub(
+            r"(!?)\[([^\]]+)\]\(([^)\s]+)(?:\s+[\"']([^\"']+)[\"'])?\)(.*)",
+            repl_link, text, flags=re.S)
+
+        text = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", text)
+        text = re.sub(r"~~([^~]+)~~", r"<del>\1</del>", text)
+        text = re.sub(r"(?<![\w*])\*([^*\n]+)\*(?!\*)", r"<em>\1</em>", text)
+        text = re.sub(r"(?<![\w_])_([^_\n]+)_(?![\w_])", r"<em>\1</em>", text)
+        return text
+
+    def _anchor(self, text):
+        base = slugify(re.sub(r"<[^>]+>", "", text))
+        if not base:
+            base = "sec"
+        n = self._anchor_counter.get(base, 0)
+        self._anchor_counter[base] = n + 1
+        return base if n == 0 else f"{base}-{n}"
+
+    # --- 块级 ---
+    def block(self, text):
+        lines = text.split("\n")
+        i, n = 0, len(lines)
+        while i < n:
+            line = lines[i]
+            stripped = line.strip()
+
+            # 代码块
+            m = re.match(r"```(\w*)", stripped)
+            if m:
+                lang = m.group(1)
+                buf = []
+                i += 1
+                while i < n and not lines[i].strip().startswith("```"):
+                    buf.append(lines[i])
+                    i += 1
+                i += 1
+                code = "\n".join(buf)
+                if lang:
+                    self._out.append(f'<pre class="code-block"><code class="lang-{esc(lang)}">{esc(code)}</code></pre>')
+                else:
+                    self._out.append(f'<pre class="code-block"><code>{esc(code)}</code></pre>')
+                self._out.append('<button class="code-copy" type="button" title="复制代码">复制</button>')
+                continue
+
+            # 标题
+            m = re.match(r"^(#{1,6})\s+(.*?)\s*#*\s*$", stripped)
+            if m:
+                level = len(m.group(1))
+                raw = m.group(2)
+                aid = self._anchor(raw)
+                self.headings.append((level, aid, self.inline(raw)))
+                self._out.append(f'<h{level} id="{aid}">{self.inline(raw)}</h{level}>')
+                i += 1
+                continue
+
+            # 分割线
+            if re.match(r"^(-{3,}|\*{3,}|_{3,})$", stripped):
+                self._out.append("<hr>")
+                i += 1
+                continue
+
+            # 表格
+            if "|" in line and i + 1 < n and re.match(r"^\s*\|?[\s:|-]+\|?[\s:|-]*$", lines[i + 1]) and "-" in lines[i + 1]:
+                head = [c.strip() for c in line.strip().strip("|").split("|")]
+                i += 2
+                rows = []
+                while i < n and "|" in lines[i] and lines[i].strip():
+                    rows.append([c.strip() for c in lines[i].strip().strip("|").split("|")])
+                    i += 1
+                thead = "".join(f"<th>{esc(h)}</th>" for h in head)
+                tbody = ""
+                for row in rows:
+                    tds = "".join(f"<td>{self.inline(c)}</td>" for c in row)
+                    tbody += f"<tr>{tds}</tr>"
+                self._out.append(
+                    f'<div class="table-wrap"><table><thead><tr>{thead}</tr></thead><tbody>{tbody}</tbody></table></div>'
+                )
+                continue
+
+            # 引用
+            if stripped.startswith(">"):
+                buf = []
+                while i < n and lines[i].strip().startswith(">"):
+                    buf.append(re.sub(r"^>\s?", "", lines[i]))
+                    i += 1
+                sub = Markdown()
+                sub.block("\n".join(buf))
+                self._out.append(f'<blockquote>{"".join(sub._out)}</blockquote>')
+                continue
+
+            # 列表 (无序/有序/任务)
+            if re.match(r"^\s*[-*+]\s+", stripped):
+                buf = []
+                while i < n and re.match(r"^\s*[-*+]\s+", lines[i]):
+                    content = re.sub(r"^\s*[-*+]\s+", "", lines[i])
+                    task = re.match(r"^\[([ xX])\]\s+(.*)", content)
+                    if task:
+                        checked = " checked" if task.group(1).lower() == "x" else ""
+                        buf.append(f'<li class="task"><input type="checkbox" disabled{checked}><span>{self.inline(task.group(2))}</span></li>')
+                    else:
+                        buf.append(f"<li>{self.inline(content)}</li>")
+                    i += 1
+                self._out.append("<ul>" + "".join(buf) + "</ul>")
+                continue
+
+            if re.match(r"^\s*\d+[.)]\s+", stripped):
+                buf = []
+                while i < n and re.match(r"^\s*\d+[.)]\s+", lines[i]):
+                    content = re.sub(r"^\s*\d+[.)]\s+", "", lines[i])
+                    buf.append(f"<li>{self.inline(content)}</li>")
+                    i += 1
+                self._out.append("<ol>" + "".join(buf) + "</ol>")
+                continue
+
+            # 空行
+            if not stripped:
+                i += 1
+                continue
+
+            # 段落 (收集连续非空行)
+            buf = [line]
+            i += 1
+            while i < n and lines[i].strip() and not re.match(r"^(#{1,6}\s|```|>\s|[-*+]\s|\d+[.)]\s|\s*\|)", lines[i].strip()):
+                buf.append(lines[i])
+                i += 1
+            para = " ".join(x.strip() for x in buf if x.strip())
+            self._out.append(f"<p>{self.inline(para)}</p>")
+
+        return "".join(self._out)
+
+    def render(self, text):
+        self.__init__()
+        return self.block(text)
+
+
+def md_to_html(text):
+    return Markdown().render(text)
+
+
+# ------------------------------------------------------------ 读取内容 ----
+
+def load_posts():
+    posts = []
+    for fp in sorted((CONTENT / "posts").glob("*.md"), reverse=True):
+        raw = fp.read_text(encoding="utf-8")
+        meta, body = parse_front_matter(raw)
+        if str(meta.get("draft", "")).lower() in ("true", "1", "yes"):
+            continue
+        date = parse_date(meta.get("date")) or parse_date(fp.name[:10])
+        if not date:
+            date = datetime.date.fromtimestamp(fp.stat().st_mtime)
+        stem = fp.stem
+        stem = re.sub(r"^\d{4}-\d{2}-\d{2}-?", "", stem)
+        slug = meta.get("slug") or stem
+        title = meta.get("title") or slug
+        tags = meta.get("tags") or []
+        if isinstance(tags, str):
+            tags = [t.strip() for t in tags.replace("，", ",").split(",") if t.strip()]
+        category = meta.get("category") or meta.get("categories") or "未分类"
+        summary = meta.get("summary") or ""
+        cover = meta.get("cover") or ""
+        content_html = md_to_html(body)
+        word_count = len(re.sub(r"\s", "", body))
+        reading_min = max(1, round(word_count / 420))
+        tmp = Markdown()
+        tmp.render(body)
+        posts.append({
+            "slug": slug,
+            "title": title,
+            "date": date,
+            "date_str": date_fmt(date),
+            "tags": tags,
+            "category": category,
+            "summary": summary,
+            "cover": cover,
+            "url": f"posts/{slug}/",
+            "content_html": content_html,
+            "content_text": re.sub(r"<[^>]+>", "", content_html),
+            "word_count": word_count,
+            "reading_min": reading_min,
+            "headings": tmp.headings,
+            "status": "published",
+        })
+    posts.sort(key=lambda p: p["date"], reverse=True)
+    return posts
+
+
+def load_pages():
+    pages = []
+    for fp in sorted((CONTENT / "pages").glob("*.md")):
+        raw = fp.read_text(encoding="utf-8")
+        meta, body = parse_front_matter(raw)
+        slug = meta.get("slug") or fp.stem
+        title = meta.get("title") or slug
+        content_html = md_to_html(body)
+        pages.append({
+            "slug": slug,
+            "title": title,
+            "url": f"{slug}/" if slug != "index" else "",
+            "content_html": content_html,
+            "content_text": re.sub(r"<[^>]+>", "", content_html),
+        })
+    return pages
+
+
+def compute_indexes(posts):
+    categories = {}
+    tags = {}
+    archive = {}
+    for p in posts:
+        categories.setdefault(p["category"], []).append(p)
+        for t in p["tags"]:
+            tags.setdefault(t, []).append(p)
+        key = p["date"].strftime("%Y年%m月")
+        archive.setdefault(key, []).append(p)
+    for v in categories.values():
+        v.sort(key=lambda p: p["date"], reverse=True)
+    for v in tags.values():
+        v.sort(key=lambda p: p["date"], reverse=True)
+    return categories, tags, archive
+
+
+def related_posts(post, posts, k=3):
+    scored = []
+    for p in posts:
+        if p["slug"] == post["slug"]:
+            continue
+        score = len(set(p["tags"]) & set(post["tags"])) * 2
+        if p["category"] == post["category"]:
+            score += 3
+        if score > 0:
+            scored.append((score, p))
+    scored.sort(key=lambda x: (x[0], x[1]["date"]), reverse=True)
+    return [p for _, p in scored[:k]]
+
+
+# -------------------------------------------------------------- 渲染 ----
+
+class Renderer:
+    """root 前缀: 空 = 根目录页面; '../' = 一级子目录; '../../' = 二级子目录"""
+
+    def __init__(self):
+        self.base = (THEME / "templates" / "base.html").read_text(encoding="utf-8")
+        self.nav = CONFIG.get("nav", [])
+        self.social = CONFIG.get("social", {})
+        self.dist = DIST
+
+    def page(self, title, body, *, root, active="", description="", extra_head=""):
+        nav_html = []
+        for item in self.nav:
+            url = item.get("url", "")
+            cls = ' class="active"' if (item.get("key") or url) == active else ""
+            nav_html.append(f'<a href="{root}{url}"{cls}>{esc(item.get("label", ""))}</a>')
+        social_html = ""
+        if self.social:
+            icons = ""
+            for key, val in self.social.items():
+                if not val:
+                    continue
+                href = val
+                if not href.startswith(("http://", "https://", "mailto:")):
+                    href = root + href
+                icons += f'<a class="social-link" href="{esc(href)}" target="_blank" rel="noopener nofollow" aria-label="{esc(key)}">{esc(key)}</a>'
+            if icons:
+                social_html = f'<div class="social">{icons}</div>'
+        return self.base.replace("{{title}}", esc(title)) \
+            .replace("{{site_title}}", esc(SITE["title"])) \
+            .replace("{{subtitle}}", esc(SITE.get("subtitle", ""))) \
+            .replace("{{description}}", esc(description or SITE.get("description", ""))) \
+            .replace("{{root}}", root) \
+            .replace("{{nav}}", "".join(nav_html)) \
+            .replace("{{social}}", social_html) \
+            .replace("{{site_year}}", str(datetime.date.today().year)) \
+            .replace("{{site_author}}", esc(SITE.get("author", ""))) \
+            .replace("{{extra_head}}", extra_head) \
+            .replace("{{content}}", body)
+
+
+def render_index(posts, page_no=1, per_page=6):
+    r = Renderer()
+    total = len(posts)
+    pages = max(1, (total + per_page - 1) // per_page)
+    page_no = max(1, min(page_no, pages))
+    start = (page_no - 1) * per_page
+    chunk = posts[start:start + per_page]
+
+    root = "" if page_no == 1 else "../../"
+    cards = []
+    for p in chunk:
+        tags_html = "".join(
+            f'<a class="chip chip-tag" href="{root}tags/{slugify(t)}/">{esc(t)}</a>'
+            for t in p["tags"][:4])
+        cover_html = ""
+        if p.get("cover"):
+            cover_html = f'<div class="card-cover"><img src="{esc(p["cover"])}" alt="" loading="lazy"></div>'
+        else:
+            cover_html = '<div class="card-cover card-cover-placeholder"><span></span></div>'
+        cards.append(f'''
+<article class="card">
+  {cover_html}
+  <div class="card-body">
+    <div class="card-meta">
+      <span class="date">{p["date_str"]}</span>
+      <a class="chip chip-cat" href="{root}categories/{slugify(p["category"])}/">{esc(p["category"])}</a>
+      <span class="read-min">{p["reading_min"]} 分钟阅读 · {p["word_count"]} 字</span>
+    </div>
+    <h2 class="card-title"><a href="{root}{p["url"]}">{esc(p["title"])}</a></h2>
+    <p class="card-summary">{esc(p["summary"] or p["content_text"][:120])}</p>
+    <div class="card-tags">{tags_html}</div>
+  </div>
+</article>''')
+
+    pagination = ""
+    if pages > 1:
+        items = []
+        if page_no > 1:
+            prev_url = root + ("index.html" if page_no == 2 else f"page/{page_no - 1}/")
+            items.append(f'<a class="pager prev" href="{prev_url}">‹ 上一页</a>')
+        items.append(f'<span class="pager-info">{page_no} / {pages} · 共 {total} 篇</span>')
+        if page_no < pages:
+            items.append(f'<a class="pager next" href="{root}page/{page_no + 1}/">下一页 ›</a>')
+        pagination = f'<nav class="pagination">{"".join(items)}</nav>'
+
+    hero = ""
+    if page_no == 1:
+        hero = f'''
+<section class="hero">
+  <h1>{esc(SITE.get("title", ""))}</h1>
+  <p class="hero-sub">{esc(SITE.get("description", ""))}</p>
+</section>'''
+
+    body = hero + '<div class="cards">' + "".join(cards) + "</div>" + pagination
+    return r.page(SITE.get("title", ""), body, root=root, active="index",
+                  description=SITE.get("description", ""))
+
+
+def render_post(post, posts):
+    r = Renderer()
+    root = "../../"
+    prev = next_p = None
+    for idx, p in enumerate(posts):
+        if p["slug"] == post["slug"]:
+            prev = posts[idx + 1] if idx + 1 < len(posts) else None   # 更早的
+            next_p = posts[idx - 1] if idx > 0 else None              # 更新的
+            break
+
+    toc = ""
+    if post["headings"]:
+        items = []
+        for lv, aid, text in post["headings"]:
+            cls = "toc-h3" if lv >= 3 else ""
+            items.append(f'<a class="{cls}" href="#{aid}">{text}</a>')
+        toc = '<nav class="toc"><div class="toc-title">目录</div><div class="toc-links">' + "".join(items) + "</div></nav>"
+
+    tags_html = "".join(
+        f'<a class="chip chip-tag" href="{root}tags/{slugify(t)}/">{esc(t)}</a>'
+        for t in post["tags"])
+
+    prev_html = f'<a class="nav-item prev" href="{root}posts/{prev["slug"]}/"><span>← 更早</span><b>{esc(prev["title"])}</b></a>' if prev else "<span></span>"
+    next_html = f'<a class="nav-item next" href="{root}posts/{next_p["slug"]}/"><span>更新 →</span><b>{esc(next_p["title"])}</b></a>' if next_p else "<span></span>"
+
+    rel = related_posts(post, posts)
+    rel_html = ""
+    if rel:
+        items = "".join(
+            f'<li><a href="{root}posts/{p["slug"]}/">{esc(p["title"])}</a><span>{p["date_str"]}</span></li>'
+            for p in rel)
+        rel_html = f'<section class="related"><h3>相关阅读</h3><ul>{items}</ul></section>'
+
+    article = f'''
+<article class="post">
+  <header class="post-header">
+    <div class="post-meta">
+      <span class="date">{post["date_str"]}</span>
+      <a class="chip chip-cat" href="{root}categories/{slugify(post["category"])}/">{esc(post["category"])}</a>
+      <span class="read-min">{post["reading_min"]} 分钟 · {post["word_count"]} 字</span>
+    </div>
+    <h1 class="post-title">{esc(post["title"])}</h1>
+    <div class="post-tags">{tags_html}</div>
+  </header>
+  <div class="post-layout">
+    {toc}
+    <div class="post-body">{post["content_html"]}</div>
+  </div>
+  <footer class="post-footer">
+    <nav class="post-nav">{prev_html}{next_html}</nav>
+  </footer>
+  {rel_html}
+</article>'''
+    return r.page(post["title"], article, root=root, active="",
+                  description=post.get("summary", ""),
+                  extra_head='<link rel="stylesheet" href="../../static/css/highlight.css">')
+
+
+def render_page(page):
+    r = Renderer()
+    body = f'<article class="page post"><header class="post-header"><h1 class="page-title">{esc(page["title"])}</h1></header><div class="post-body">{page["content_html"]}</div></article>'
+    return r.page(page["title"], body, root="../", active="page", description=SITE.get("description", ""))
+
+
+def render_archive(posts):
+    r = Renderer()
+    _, _, archive = compute_indexes(posts)
+    html_parts = []
+    for key in sorted(archive.keys(), reverse=True):
+        items = "".join(
+            f'<li><span class="date">{p["date_str"]}</span><a href="../posts/{p["slug"]}/">{esc(p["title"])}</a><span class="cat">{esc(p["category"])}</span></li>'
+            for p in archive[key])
+        html_parts.append(f'<section class="archive-group"><h2>{esc(key)} <em>{len(archive[key])}</em></h2><ul>{items}</ul></section>')
+    body = f'<div class="page post"><header class="post-header"><h1 class="page-title">归档</h1><p class="page-sub">共 {len(posts)} 篇文章</p></header><div class="archive">{"".join(html_parts)}</div></div>'
+    return r.page("归档", body, root="../", active="archive")
+
+
+def render_tags(posts):
+    r = Renderer()
+    _, tags, _ = compute_indexes(posts)
+    items = []
+    for tag, ps in sorted(tags.items(), key=lambda kv: -len(kv[1])):
+        size = 1 + min(2, len(ps) // 3)
+        items.append(f'<a class="tag-cloud tag-{size}" href="../tags/{slugify(tag)}/">{esc(tag)}<em>{len(ps)}</em></a>')
+    body = f'<div class="page post"><header class="post-header"><h1 class="page-title">标签</h1></header><div class="tag-cloud-wrap">{"".join(items)}</div></div>'
+    return r.page("标签", body, root="../", active="tags")
+
+
+def render_tag(tag, posts):
+    r = Renderer()
+    root = "../../"
+    items = "".join(
+        f'<li><span class="date">{p["date_str"]}</span><a href="{root}posts/{p["slug"]}/">{esc(p["title"])}</a></li>'
+        for p in posts)
+    body = f'<div class="page post"><header class="post-header"><h1 class="page-title">#{esc(tag)}</h1><p class="page-sub">{len(posts)} 篇文章</p></header><ul class="flat-list">{items}</ul></div>'
+    return r.page(f"标签: {tag}", body, root=root, active="tags")
+
+
+def render_category(cat, posts):
+    r = Renderer()
+    root = "../../"
+    items = "".join(
+        f'<li><span class="date">{p["date_str"]}</span><a href="{root}posts/{p["slug"]}/">{esc(p["title"])}</a></li>'
+        for p in posts)
+    body = f'<div class="page post"><header class="post-header"><h1 class="page-title">{esc(cat)}</h1><p class="page-sub">{len(posts)} 篇文章</p></header><ul class="flat-list">{items}</ul></div>'
+    return r.page(f"分类: {cat}", body, root=root, active="")
+
+
+def render_search():
+    r = Renderer()
+    body = '''<div class="page post"><header class="post-header"><h1 class="page-title">搜索</h1></header>
+<div class="search-box"><input id="search-input" type="search" placeholder="输入关键词，如：Markdown、部署…" autocomplete="off"><button id="search-btn" type="button">搜索</button></div>
+<div id="search-hint" class="search-hint">输入关键词即可全文检索本站内容</div>
+<ul id="search-results" class="search-results"></ul></div>
+<script src="../static/js/search.js" defer></script>'''
+    return r.page("搜索", body, root="../", active="search")
+
+
+def render_404():
+    r = Renderer()
+    body = '<div class="page post notfound"><h1 class="page-title">404</h1><p class="hero-sub">页面不存在或已被移动。</p><a class="btn" href="index.html">返回首页</a></div>'
+    return r.page("页面未找到", body, root="", active="")
+
+
+# --------------------------------------------------------------- Feed ----
+
+def render_feed(posts):
+    base = SITE.get("base", "").rstrip("/") + "/"
+    pub = (posts[0]["date"].isoformat() if posts else datetime.date.today().isoformat()) + "T00:00:00+08:00"
+    entries = []
+    for p in posts[:20]:
+        desc = esc(p.get("summary") or p["content_text"][:200])
+        entries.append(f'''<entry>
+  <title>{esc(p["title"])}</title>
+  <link href="{base}{p["url"]}"/>
+  <id>{base}{p["url"]}</id>
+  <published>{p["date"].isoformat()}T00:00:00+08:00</published>
+  <updated>{p["date"].isoformat()}T00:00:00+08:00</updated>
+  <author><name>{esc(SITE.get("author", ""))}</name></author>
+  <category term="{esc(p["category"])}"/>
+  <summary>{desc}</summary>
+</entry>''')
+    xml = f'''<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>{esc(SITE["title"])}</title>
+  <subtitle>{esc(SITE.get("description", ""))}</subtitle>
+  <link href="{base}"/>
+  <link href="{base}feed.xml" rel="self"/>
+  <updated>{pub}</updated>
+  <id>{base}</id>
+  <author><name>{esc(SITE.get("author", ""))}</name></author>
+{chr(10).join(entries)}
+</feed>'''
+    return xml
+
+
+def render_sitemap(posts, pages):
+    base = SITE.get("base", "").rstrip("/") + "/"
+    urls = [
+        f"  <url><loc>{base}</loc></url>",
+        f"  <url><loc>{base}archive/</loc></url>",
+        f"  <url><loc>{base}tags/</loc></url>",
+        f"  <url><loc>{base}search/</loc></url>",
+    ]
+    for pg in pages:
+        urls.append(f'  <url><loc>{base}{pg["url"]}</loc></url>')
+    for p in posts:
+        urls.append(f'  <url><loc>{base}{p["url"]}</loc></url>')
+    return '<?xml version="1.0" encoding="utf-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' + "\n".join(urls) + "\n</urlset>"
+
+
+def render_search_index(posts, pages):
+    data = []
+    for p in posts:
+        data.append({
+            "type": "post",
+            "title": p["title"],
+            "url": SITE.get("base", "").rstrip("/") + "/" + p["url"],
+            "date": p["date_str"],
+            "category": p["category"],
+            "tags": p["tags"],
+            "summary": p.get("summary") or p["content_text"][:160],
+            "content": p["content_text"][:600],
+        })
+    for pg in pages:
+        data.append({
+            "type": "page",
+            "title": pg["title"],
+            "url": SITE.get("base", "").rstrip("/") + "/" + pg["url"],
+            "date": "",
+            "category": "",
+            "tags": [],
+            "summary": pg["content_text"][:160],
+            "content": pg["content_text"][:400],
+        })
+    return json.dumps(data, ensure_ascii=False, indent=1)
+
+
+# --------------------------------------------------------------- 构建 ----
+
+def write(path, content, root=DIST):
+    fp = root / path
+    fp.parent.mkdir(parents=True, exist_ok=True)
+    fp.write_text(content, encoding="utf-8")
+
+
+def build():
+    if DIST.exists():
+        shutil.rmtree(DIST)
+    DIST.mkdir(parents=True)
+
+    posts = load_posts()
+    pages = load_pages()
+
+    # 首页 + 分页
+    per_page = int(SITE.get("posts_per_page", 6))
+    total_pages = max(1, (len(posts) + per_page - 1) // per_page)
+    for page_no in range(1, total_pages + 1):
+        if page_no == 1:
+            write("index.html", render_index(posts, page_no, per_page))
+        else:
+            write(f"page/{page_no}/index.html", render_index(posts, page_no, per_page))
+
+    # 文章页
+    for p in posts:
+        write(f"posts/{p['slug']}/index.html", render_post(p, posts))
+
+    # 独立页面
+    for pg in pages:
+        if pg["slug"] == "index":
+            write("index.html", render_page(pg))
+        else:
+            write(f"{pg['slug']}/index.html", render_page(pg))
+
+    # 归档 / 标签 / 分类
+    write("archive/index.html", render_archive(posts))
+    write("tags/index.html", render_tags(posts))
+    _, tags, _ = compute_indexes(posts)
+    for tag, ps in tags.items():
+        write(f"tags/{slugify(tag)}/index.html", render_tag(tag, ps))
+    categories, _, _ = compute_indexes(posts)
+    for cat, ps in categories.items():
+        write(f"categories/{slugify(cat)}/index.html", render_category(cat, ps))
+
+    # 工具页
+    write("search/index.html", render_search())
+    write("404.html", render_404())
+
+    # 数据与协议
+    write("feed.xml", render_feed(posts))
+    write("sitemap.xml", render_sitemap(posts, pages))
+    write("search_index.json", render_search_index(posts, pages))
+    write("robots.txt", "User-agent: *\nAllow: /\n")
+
+    # 静态资源
+    src_static = THEME / "static"
+    if src_static.exists():
+        shutil.copytree(src_static, DIST / "static")
+
+    print(f"[OK] 共生成 {len(posts)} 篇文章, {len(pages)} 个页面, 分页 {total_pages} 页")
+    print(f"[OK] 站点输出目录: {DIST}")
+
+
+if __name__ == "__main__":
+    build()

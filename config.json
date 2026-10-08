@@ -1,0 +1,26 @@
+{
+  "site": {
+    "title": "OverCome",
+    "subtitle": "无服务器 · 免费 · 高级博客",
+    "description": "一个运行在 GitHub Pages 上的零服务器博客系统：无需数据库、无需后端，纯静态却功能齐全。",
+    "author": "科技酱",
+    "email": "techjiang@users.noreply.github.com",
+    "language": "zh-CN",
+    "timezone": "Asia/Shanghai",
+    "date_format": "%Y-%m-%d",
+    "posts_per_page": 6,
+    "base": "https://techjiang.github.io/OverCome/",
+    "since": 2026
+  },
+  "nav": [
+    { "key": "index",   "label": "首页", "url": "" },
+    { "key": "archive", "label": "归档", "url": "archive/" },
+    { "key": "tags",    "label": "标签", "url": "tags/" },
+    { "key": "search",  "label": "搜索", "url": "search/" },
+    { "key": "about",   "label": "关于", "url": "about/" }
+  ],
+  "social": {
+    "GitHub": "https://github.com/techjiang",
+    "RSS": "feed.xml"
+  }
+}
